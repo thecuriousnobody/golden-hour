@@ -1,0 +1,24 @@
+[
+  {
+    "id": "fortis-mg-road",
+    "name": "Fortis Hospital MG Road",
+    "city": "bangalore",
+    "capabilities": ["cath_lab", "trauma", "icu", "stroke_unit"],
+    "address": "14, Cunningham Road, Bangalore",
+    "location": {"lat": 12.9816, "lng": 77.5920},
+    "emergency_contact": "+91-80-66214444",
+    "verified": false,
+    "verified_date": null
+  },
+  {
+    "id": "apollo-bannerghatta",
+    "name": "Apollo Hospital Bannerghatta",
+    "city": "bangalore",
+    "capabilities": ["cath_lab", "trauma", "icu", "stroke_unit"],
+    "address": "154/11, Bannerghatta Road",
+    "location": {"lat": 12.8891, "lng": 77.5970},
+    "emergency_contact": "+91-80-26304050",
+    "verified": false,
+    "verified_date": null
+  }
+]
