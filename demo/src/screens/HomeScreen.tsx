@@ -1,4 +1,5 @@
-import { motion } from 'framer-motion'
+import { useState, useEffect } from 'react'
+import { motion, AnimatePresence } from 'framer-motion'
 import {
   Heart,
   Car,
@@ -8,8 +9,12 @@ import {
   ClipboardList,
   User,
   Settings,
+  X,
+  AlertCircle,
+  CheckCircle,
 } from 'lucide-react'
 import EmergencyButton from '../components/EmergencyButton'
+import { getAllSessions, EmergencySession } from '../services/sessionStorage'
 
 interface Props {
   onActivate: () => void
@@ -38,6 +43,24 @@ const navItems = [
 ]
 
 export default function HomeScreen({ onActivate }: Props) {
+  const [showHistory, setShowHistory] = useState(false)
+  const [sessions, setSessions] = useState<EmergencySession[]>([])
+
+  // Load sessions on mount and when history panel opens
+  useEffect(() => {
+    setSessions(getAllSessions())
+  }, [showHistory])
+
+  const formatTime = (timestamp: string) => {
+    const date = new Date(timestamp)
+    return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
+  }
+
+  const formatDate = (timestamp: string) => {
+    const date = new Date(timestamp)
+    return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -119,14 +142,120 @@ export default function HomeScreen({ onActivate }: Props) {
       {/* Bottom nav */}
       <div className="flex justify-around px-5 py-3.5 pb-8 border-t border-white/[0.06] bg-midnight-800/90 backdrop-blur-xl">
         {navItems.map((item) => (
-          <button key={item.label} className={`flex flex-col items-center gap-1 ${item.active ? 'opacity-100' : 'opacity-40'} hover:opacity-80 transition-opacity`}>
+          <button
+            key={item.label}
+            onClick={item.label === 'History' ? () => setShowHistory(true) : undefined}
+            className={`flex flex-col items-center gap-1 relative ${item.active ? 'opacity-100' : 'opacity-40'} hover:opacity-80 transition-opacity`}
+          >
             <item.icon size={22} className={item.active ? 'text-golden-500' : 'text-white'} />
             <span className={`text-[10px] font-medium ${item.active ? 'text-golden-500' : 'text-midnight-200'}`}>
               {item.label}
             </span>
+            {item.label === 'History' && sessions.length > 0 && (
+              <span className="absolute -top-1 -right-1 w-4 h-4 bg-red-500 rounded-full text-[9px] font-bold text-white flex items-center justify-center">
+                {sessions.length}
+              </span>
+            )}
           </button>
         ))}
       </div>
+
+      {/* History Panel */}
+      <AnimatePresence>
+        {showHistory && (
+          <motion.div
+            initial={{ opacity: 0, y: '100%' }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: '100%' }}
+            transition={{ type: 'spring', damping: 25, stiffness: 300 }}
+            className="absolute inset-0 bg-midnight-800 z-50 flex flex-col"
+          >
+            {/* History Header */}
+            <div className="flex items-center justify-between pt-16 px-6 pb-4 border-b border-white/[0.06]">
+              <h2 className="text-lg font-bold text-white">Session History</h2>
+              <button
+                onClick={() => setShowHistory(false)}
+                className="w-9 h-9 rounded-xl bg-white/[0.06] border border-white/10 flex items-center justify-center"
+              >
+                <X size={16} className="text-white" />
+              </button>
+            </div>
+
+            {/* Session List */}
+            <div className="flex-1 overflow-y-auto px-4 py-4 space-y-3">
+              {sessions.length === 0 ? (
+                <div className="text-center py-12">
+                  <ClipboardList size={48} className="text-midnight-500 mx-auto mb-3" />
+                  <p className="text-midnight-400 text-sm">No sessions yet</p>
+                  <p className="text-midnight-500 text-xs mt-1">Emergency calls will appear here</p>
+                </div>
+              ) : (
+                sessions.map((session) => (
+                  <motion.div
+                    key={session.id}
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    className="bg-white/[0.04] border border-white/[0.06] rounded-2xl p-4"
+                  >
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        {session.action === 'dispatched' ? (
+                          <CheckCircle size={16} className="text-emerald-400" />
+                        ) : (
+                          <AlertCircle size={16} className="text-amber-400" />
+                        )}
+                        <span className={`text-xs font-semibold ${
+                          session.action === 'dispatched' ? 'text-emerald-400' : 'text-amber-400'
+                        }`}>
+                          {session.action === 'dispatched' ? 'DISPATCHED' : 'CANCELLED'}
+                        </span>
+                      </div>
+                      <span className="text-[10px] text-midnight-400">
+                        {formatDate(session.timestamp)} {formatTime(session.timestamp)}
+                      </span>
+                    </div>
+
+                    {/* Original transcript */}
+                    <p className="text-[13px] text-white/70 mb-2 line-clamp-2">
+                      {session.originalTranscript || 'No transcript'}
+                    </p>
+
+                    {/* English translation */}
+                    {session.englishTranslation && (
+                      <p className="text-[12px] text-emerald-300/70 mb-2 italic">
+                        "{session.englishTranslation}"
+                      </p>
+                    )}
+
+                    {/* Symptoms */}
+                    {session.symptomsExtracted.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {session.symptomsExtracted.slice(0, 3).map((sym, idx) => (
+                          <span
+                            key={idx}
+                            className={`text-[10px] px-2 py-0.5 rounded-full ${
+                              sym.critical
+                                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                                : 'bg-white/[0.06] text-midnight-300 border border-white/10'
+                            }`}
+                          >
+                            {sym.value}
+                          </span>
+                        ))}
+                        {session.symptomsExtracted.length > 3 && (
+                          <span className="text-[10px] text-midnight-400">
+                            +{session.symptomsExtracted.length - 3} more
+                          </span>
+                        )}
+                      </div>
+                    )}
+                  </motion.div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </motion.div>
   )
 }
