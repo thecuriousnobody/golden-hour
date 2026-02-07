@@ -6,6 +6,64 @@ Golden Hour is an AI-powered emergency response system for India. It aims to sav
 
 The core problem: only 7% of trauma patients in India reach hospitals within the golden hour (vs 50% in the USA). 2.4 million Indians die annually from treatable conditions.
 
+## Interactive Demo (React/Vite)
+
+A working demo UI is available in `/demo/` for presentations and testing.
+
+### Running the Demo
+```bash
+cd demo
+npm install
+npm run dev
+# Opens at http://localhost:5173/
+```
+
+### Demo Features (February 2026)
+- **Real-time Kannada Speech Recognition** - Google Web Speech API (free, no key needed)
+- **Live Translation to English** - Sarvam AI Translate API
+- **Symptom Extraction** - Keyword-based extraction from English translation
+- **Session Persistence** - localStorage saves all emergency sessions
+- **Session History** - View past transcriptions with symptoms extracted
+
+### Demo Environment Variables
+```bash
+# demo/.env
+VITE_SARVAM_API_KEY=your_sarvam_api_key  # For Kannada→English translation
+```
+
+### Demo File Structure
+```
+demo/
+  src/
+    screens/
+      HomeScreen.tsx       # Main screen with emergency button + history panel
+      ListeningScreen.tsx  # Voice recording + transcription + translation
+      DispatchScreen.tsx   # Dispatch confirmation
+    services/
+      speechApi.ts         # Google Web Speech + Sarvam Translate APIs
+      sessionStorage.ts    # localStorage persistence for sessions
+      sarvamApi.ts         # Sarvam speech-to-text (backup)
+    hooks/
+      useVoiceRecorder.ts  # Microphone capture hook
+    components/
+      EmergencyButton.tsx  # Main SOS button
+      Waveform.tsx         # Audio visualization
+```
+
+### Kannada Demo Phrases (for testing)
+```
+ಸಹಾಯ ಮಾಡಿ! ನನ್ನ ಅಜ್ಜನಿಗೆ ಏನೋ ಆಗಿದೆ!
+(Help! Something has happened to my grandfather!)
+
+ಅವರಿಗೆ ಎದೆ ನೋವು ಬರ್ತಿದೆ, ತುಂಬಾ ಬೆವರ್ತಿದ್ದಾರೆ
+(He's having chest pain and sweating a lot)
+
+ಅವರ ಎಡ ಕೈ ಜೋಮು ಹಿಡಿದಿದೆ, ಉಸಿರಾಡೋಕೆ ಕಷ್ಟ ಆಗ್ತಿದೆ
+(His left arm is numb and he's having trouble breathing)
+```
+
+---
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -111,6 +169,38 @@ See `.env.example` for the full list. Key ones:
 - `SARVAM_API_KEY` — Fallback STT
 - `DATABASE_URL` — PostgreSQL (default: postgresql://goldenhour:goldenhour@localhost:5432/goldenhour)
 - `REDIS_URL` — Redis (default: redis://localhost:6379/0)
+
+## Future Considerations
+
+### Hospital Capability Matching (India)
+The challenge: Google Places API finds nearby hospitals but doesn't provide:
+- Available equipment (CT, MRI, cath lab, ventilators)
+- Specialty departments
+- Real-time bed/ICU availability
+- On-call specialists
+
+**Potential Solutions:**
+1. **ABDM Health Facility Registry (HFR)** - 3.6 lakh facilities registered
+   - Portal: https://facility.abdm.gov.in/
+   - Sandbox API: https://sandbox.abdm.gov.in/
+2. **Open Government Data** - https://data.gov.in/keywords/Bed
+3. **COVID-era APIs** - Some real-time bed APIs may still work
+4. **State partnerships** - Delhi had coronabeds.jantasamvad.org
+
+### Speaker Diarization
+Problem: Multiple people may speak during an emergency call.
+
+**Scenarios:**
+- Patient calls, then passes out → bystander continues
+- Bystander calls on behalf of patient
+- Noisy scene with multiple voices
+
+**Potential Solutions:**
+1. Lock onto first speaker's voice fingerprint
+2. Label speakers in transcript: [CALLER], [BACKGROUND]
+3. Use 3rd-person detection: "HE has chest pain" vs "I have chest pain"
+
+Current workaround: NLP extracts symptoms from content regardless of speaker.
 
 ## License & Attribution
 
