@@ -17,6 +17,12 @@ export interface EmergencySession {
   action: 'dispatched' | 'cancelled' | 'pending';
   confidenceScore: number;
   durationSeconds?: number;
+  // AI triage fields (optional — only present when Claude API is available)
+  likelyCondition?: string;
+  severity?: 'CRITICAL' | 'HIGH' | 'MODERATE' | 'LOW';
+  requiredCapabilities?: string[];
+  triageScore?: number;
+  triageReasoning?: string;
 }
 
 const STORAGE_KEY = 'golden_hour_sessions';

@@ -60,6 +60,48 @@ export async function translateToEnglish(
   };
 }
 
+// Translate English text back to an Indian language (e.g., Kannada)
+export async function translateFromEnglish(
+  text: string,
+  targetLanguage: string = 'kn-IN'
+): Promise<TranslationResult> {
+  const apiKey = import.meta.env.VITE_SARVAM_API_KEY;
+
+  if (!apiKey) {
+    throw new Error('VITE_SARVAM_API_KEY not configured');
+  }
+
+  if (!text.trim()) {
+    return { translatedText: '', sourceLanguage: 'en-IN' };
+  }
+
+  const response = await fetch(SARVAM_TRANSLATE_URL, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'api-subscription-key': apiKey,
+    },
+    body: JSON.stringify({
+      input: text,
+      source_language_code: 'en-IN',
+      target_language_code: targetLanguage,
+      mode: 'formal',
+    }),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`Sarvam API error: ${response.status} - ${errorText}`);
+  }
+
+  const data = await response.json();
+
+  return {
+    translatedText: data.translated_text || '',
+    sourceLanguage: 'en-IN',
+  };
+}
+
 // Language codes for Indian languages
 export const INDIAN_LANGUAGES = {
   'kn-IN': 'Kannada',
@@ -121,7 +163,9 @@ export function createSpeechRecognition(
     let interimTranscript = '';
     let confidence = 0;
 
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    // Accumulate ALL results (not just from resultIndex) so previous
+    // finalized segments are never lost when new speech arrives.
+    for (let i = 0; i < event.results.length; i++) {
       const result = event.results[i];
       if (result.isFinal) {
         finalTranscript += result[0].transcript;
@@ -132,7 +176,7 @@ export function createSpeechRecognition(
     }
 
     onResult({
-      transcript: finalTranscript || interimTranscript,
+      transcript: finalTranscript + interimTranscript,
       languageDetected: language,
       confidence: confidence || 0.85,
     });

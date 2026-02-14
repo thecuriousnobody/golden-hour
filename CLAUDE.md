@@ -21,7 +21,7 @@ npm run dev
 ### Demo Features (February 2026)
 - **Real-time Kannada Speech Recognition** - Google Web Speech API (free, no key needed)
 - **Live Translation to English** - Sarvam AI Translate API
-- **Symptom Extraction** - Keyword-based extraction from English translation
+- **AI-Powered Medical Triage** - Claude API extracts symptoms, infers conditions, severity, and required hospital capabilities from natural language (with keyword fallback)
 - **Session Persistence** - localStorage saves all emergency sessions
 - **Session History** - View past transcriptions with symptoms extracted
 
@@ -29,11 +29,13 @@ npm run dev
 ```bash
 # demo/.env
 VITE_SARVAM_API_KEY=your_sarvam_api_key  # For Kannada→English translation
+ANTHROPIC_API_KEY=your_anthropic_key      # For AI triage (no VITE_ prefix — server-side only)
 ```
 
 ### Demo File Structure
 ```
 demo/
+  vite-api-plugin.ts   # Vite dev server middleware (POST /api/triage → Claude API)
   src/
     screens/
       HomeScreen.tsx       # Main screen with emergency button + history panel
@@ -42,6 +44,7 @@ demo/
     services/
       speechApi.ts         # Google Web Speech + Sarvam Translate APIs
       sessionStorage.ts    # localStorage persistence for sessions
+      triageApi.ts         # AI triage via Claude API (POST /api/triage)
       sarvamApi.ts         # Sarvam speech-to-text (backup)
     hooks/
       useVoiceRecorder.ts  # Microphone capture hook
@@ -201,6 +204,54 @@ Problem: Multiple people may speak during an emergency call.
 3. Use 3rd-person detection: "HE has chest pain" vs "I have chest pain"
 
 Current workaround: NLP extracts symptoms from content regardless of speaker.
+
+### AI Triage Engine — Research & Roadmap (February 2026)
+
+**Current:** Claude Sonnet via Anthropic API (prototyping phase).
+**Long-term target:** Self-hosted OpenBioLLM-70B (open source, no API costs, full data privacy).
+
+#### Triage Standard: Emergency Severity Index (ESI)
+The ESI is the most widely adopted triage framework globally, including Indian hospitals. 5 levels:
+- ESI-1: Immediate life-threatening (cardiac arrest, not breathing)
+- ESI-2: High risk / altered mental status / severe pain (stroke, chest pain)
+- ESI-3: Multiple resources needed (fracture + laceration)
+- ESI-4: One resource needed (simple laceration)
+- ESI-5: No resources needed (cold symptoms)
+
+Our `triageScore` (1-10) should eventually align to ESI 1-5 for hospital interoperability.
+
+#### India Regulatory Landscape (CDSCO)
+CDSCO released Draft Guidance on Medical Device Software (Oct 2025) distinguishing:
+- **SaMD (Software as Medical Device)** — standalone diagnostic → Class C/D approval needed
+- **CDS (Clinical Decision Support)** — aids human decision-making → lighter regulation
+
+**Golden Hour is CDS, not SaMD.** We extract symptoms and route — humans make final decisions.
+Must display: *"AI-assisted triage — not a medical diagnosis. Final decisions made by medical professionals."*
+
+Reference: https://corporate.cyrilamarchandblogs.com/2026/01/medical-device-as-software-has-cdsco-guidance-changed-the-rules/
+
+#### Model Comparison (as of Feb 2026)
+
+| Option | Cost | Medical Accuracy | JSON Support | Notes |
+|--------|------|-----------------|--------------|-------|
+| Claude Sonnet (current) | ~$3/1M input | Excellent | Prompt-based | Currently integrated |
+| Gemini 2.5 Flash | **Free** (1000 req/day) | Very good | Native JSON Schema | Best free option |
+| Groq (Llama 3) | ~$0.20/1M | Good | Prompt-based | Fastest inference |
+| **OpenBioLLM-70B** | **Free (self-hosted)** | **86%+ (beats Med-PaLM-2)** | Prompt-based | **Long-term target** |
+| BioMistral-7B | Free (self-hosted) | Good for 7B | Prompt-based | Lighter alternative |
+| Meditron-70B | Free (self-hosted) | Trained on medical guidelines | Prompt-based | EPFL medical LLM |
+
+**Recommended production path:**
+1. Now: Claude Sonnet (prototyping, already integrated)
+2. Next: Gemini Flash free tier (cost savings, native structured output)
+3. Production: OpenBioLLM-70B self-hosted (best medical accuracy, zero API cost, data sovereignty)
+
+**Key references:**
+- OpenBioLLM: https://huggingface.co/blog/aaditya/openbiollm
+- Meditron: https://github.com/epfLLM/meditron
+- Gemini structured output: https://ai.google.dev/gemini-api/docs/structured-output
+- Gemini free tier: https://ai.google.dev/gemini-api/docs/pricing
+- CDSCO SaMD guidance: https://www.india-briefing.com/news/cdsco-draft-guidance-medical-software-40691.html/
 
 ## License & Attribution
 
