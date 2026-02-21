@@ -1,32 +1,38 @@
 """AI triage engine endpoints."""
 
 from fastapi import APIRouter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from src.backend.triage.engine import run_triage, TriageAssessment
 
 router = APIRouter()
 
 
 class TriageRequest(BaseModel):
-    transcript: str
+    transcript: str = Field(description="English transcript of the emergency call")
+    language: str = Field(default="en", description="Original language code (kn, hi, ta, te, en)")
+    location: dict | None = Field(default=None, description="Caller location {lat, lng}")
+
+
+class TriageResponse(BaseModel):
+    """Full triage response including assessment and location."""
+    assessment: TriageAssessment
     location: dict | None = None
 
 
-class TriageResult(BaseModel):
-    classification: str
-    severity: str
-    confidence: float
-    symptoms_extracted: list[str]
-    required_capability: str | None = None
-    recommended_facilities: list[dict] = []
+@router.post("/classify")
+async def classify_emergency(request: TriageRequest) -> TriageResponse:
+    """Classify emergency type and severity from transcript.
 
+    Uses Claude API for intelligent medical triage with keyword fallback.
+    Returns structured assessment with ESI level, required capabilities, etc.
+    """
+    assessment = await run_triage(
+        transcript=request.transcript,
+        language=request.language,
+    )
 
-@router.post("/classify", response_model=TriageResult)
-async def classify_emergency(request: TriageRequest):
-    """Classify emergency type and severity from transcript."""
-    # TODO: Integrate Claude API for medical reasoning
-    return TriageResult(
-        classification="unknown",
-        severity="unknown",
-        confidence=0.0,
-        symptoms_extracted=[],
+    return TriageResponse(
+        assessment=assessment,
+        location=request.location,
     )

@@ -1,0 +1,46 @@
+[
+  {
+    "id": "amb-108-central",
+    "name": "108 Ambulance - Central",
+    "type": "als",
+    "provider": "GVK EMRI",
+    "location": {"lat": 12.9716, "lng": 77.5946},
+    "whatsapp_number": "+91-98450-10801",
+    "available": true,
+    "equipment": ["defibrillator", "oxygen", "stretcher", "first_aid"],
+    "crew": ["emt", "driver"]
+  },
+  {
+    "id": "amb-108-south",
+    "name": "108 Ambulance - South",
+    "type": "als",
+    "provider": "GVK EMRI",
+    "location": {"lat": 12.9100, "lng": 77.5800},
+    "whatsapp_number": "+91-98450-10802",
+    "available": true,
+    "equipment": ["defibrillator", "oxygen", "stretcher", "first_aid", "ventilator_portable"],
+    "crew": ["emt", "paramedic", "driver"]
+  },
+  {
+    "id": "amb-private-01",
+    "name": "Apollo Emergency Ambulance",
+    "type": "als",
+    "provider": "Apollo Hospitals",
+    "location": {"lat": 12.8900, "lng": 77.5950},
+    "whatsapp_number": "+91-98450-10803",
+    "available": true,
+    "equipment": ["defibrillator", "oxygen", "stretcher", "cardiac_monitor", "first_aid"],
+    "crew": ["emt", "nurse", "driver"]
+  },
+  {
+    "id": "amb-bls-east",
+    "name": "BLS Ambulance - East",
+    "type": "bls",
+    "provider": "City EMS",
+    "location": {"lat": 12.9600, "lng": 77.6500},
+    "whatsapp_number": "+91-98450-10804",
+    "available": false,
+    "equipment": ["oxygen", "stretcher", "first_aid"],
+    "crew": ["emt", "driver"]
+  }
+]

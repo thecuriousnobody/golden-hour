@@ -1,0 +1,57 @@
+[
+  {
+    "id": "nurse-001",
+    "name": "Priya Sharma",
+    "qualification": "BSc Nursing, BLS/ACLS certified",
+    "specialization": "cardiac_care",
+    "location": {"lat": 12.9700, "lng": 77.6000},
+    "whatsapp_number": "+91-98450-00001",
+    "available": true,
+    "radius_km": 5,
+    "languages": ["kannada", "english", "hindi"]
+  },
+  {
+    "id": "nurse-002",
+    "name": "Meena Reddy",
+    "qualification": "GNM Nursing, Trauma certified",
+    "specialization": "trauma",
+    "location": {"lat": 12.9350, "lng": 77.6100},
+    "whatsapp_number": "+91-98450-00002",
+    "available": true,
+    "radius_km": 3,
+    "languages": ["kannada", "telugu", "english"]
+  },
+  {
+    "id": "nurse-003",
+    "name": "Lakshmi Gowda",
+    "qualification": "BSc Nursing, Pediatric ICU",
+    "specialization": "pediatric",
+    "location": {"lat": 12.9500, "lng": 77.5800},
+    "whatsapp_number": "+91-98450-00003",
+    "available": false,
+    "radius_km": 4,
+    "languages": ["kannada", "english"]
+  },
+  {
+    "id": "nurse-004",
+    "name": "Anitha Kumar",
+    "qualification": "MSc Nursing, Emergency Medicine",
+    "specialization": "emergency",
+    "location": {"lat": 12.9900, "lng": 77.5600},
+    "whatsapp_number": "+91-98450-00004",
+    "available": true,
+    "radius_km": 5,
+    "languages": ["kannada", "tamil", "english"]
+  },
+  {
+    "id": "nurse-005",
+    "name": "Deepa Hegde",
+    "qualification": "BSc Nursing, BLS certified",
+    "specialization": "general",
+    "location": {"lat": 12.9100, "lng": 77.6300},
+    "whatsapp_number": "+91-98450-00005",
+    "available": true,
+    "radius_km": 3,
+    "languages": ["kannada", "english", "hindi"]
+  }
+]

@@ -1,6 +1,7 @@
 """Golden Hour - Backend API Server"""
 
 import os
+import logging
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
@@ -13,12 +14,17 @@ from src.backend.speech.router import router as speech_router
 from src.backend.triage.router import router as triage_router
 from src.backend.dispatch.router import router as dispatch_router
 from src.backend.notifications.router import router as notifications_router
+from src.backend.pipeline import router as pipeline_router
+from src.backend.dispatch.hospital_matcher import load_hospitals
+
+logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup
     print("Golden Hour API starting up...")
+    load_hospitals()
     yield
     # Shutdown
     print("Golden Hour API shutting down...")
@@ -43,6 +49,7 @@ app.include_router(speech_router, prefix="/api/v1/speech", tags=["speech"])
 app.include_router(triage_router, prefix="/api/v1/triage", tags=["triage"])
 app.include_router(dispatch_router, prefix="/api/v1/dispatch", tags=["dispatch"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["notifications"])
+app.include_router(pipeline_router, prefix="/api/v1", tags=["pipeline"])
 
 
 @app.get("/")
