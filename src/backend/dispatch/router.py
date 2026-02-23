@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from src.backend.triage.engine import run_triage, TriageAssessment
 from src.backend.dispatch.orchestrator import run_dispatch, CallerInfo, DispatchResult
 from src.backend.dispatch.whatsapp import get_message_log, clear_message_log
+from src.backend.dispatch.session_store import session_store
 
 router = APIRouter()
 
@@ -118,3 +119,64 @@ async def get_dispatch_messages():
     Useful for the prototype UI to display message bubbles.
     """
     return {"messages": get_message_log()}
+
+
+# ---------------------------------------------------------------------------
+# Session state machine endpoints
+# ---------------------------------------------------------------------------
+
+class TransitionRequest(BaseModel):
+    """Request to transition a session state."""
+    trigger: str = Field(description="State machine trigger: start_triage, start_dispatch, ambulance_acknowledge, ambulance_depart, arrive_on_scene, begin_transport, arrive_at_hospital, resolve, escalate, cancel")
+    metadata: dict = Field(default_factory=dict)
+
+
+@router.get("/session/{session_id}")
+async def get_session(session_id: str):
+    """Get the current state and timeline of a dispatch session."""
+    session = session_store.get(session_id)
+    if not session:
+        return {"error": "Session not found", "session_id": session_id}
+    return session.to_dict()
+
+
+@router.post("/session/{session_id}/transition")
+async def transition_session(session_id: str, request: TransitionRequest):
+    """Trigger a state transition on a dispatch session."""
+    session = session_store.get(session_id)
+    if not session:
+        return {"error": "Session not found", "session_id": session_id}
+
+    success = session.transition_to(request.trigger, request.metadata)
+    return {
+        "success": success,
+        "session": session.to_dict(),
+    }
+
+
+@router.post("/session/{session_id}/cancel")
+async def cancel_session(session_id: str):
+    """Cancel an active dispatch session."""
+    session = session_store.get(session_id)
+    if not session:
+        return {"error": "Session not found", "session_id": session_id}
+
+    success = session.transition_to("cancel")
+    return {
+        "success": success,
+        "session": session.to_dict(),
+    }
+
+
+@router.post("/session/{session_id}/acknowledge")
+async def acknowledge_session(session_id: str, metadata: dict = {}):
+    """Acknowledge ambulance dispatch (shorthand for ambulance_acknowledge trigger)."""
+    session = session_store.get(session_id)
+    if not session:
+        return {"error": "Session not found", "session_id": session_id}
+
+    success = session.transition_to("ambulance_acknowledge", metadata)
+    return {
+        "success": success,
+        "session": session.to_dict(),
+    }

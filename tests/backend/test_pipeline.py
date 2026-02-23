@@ -55,6 +55,15 @@ class TestEmergencyPipeline:
         # Messages
         assert len(data["messages"]) > 0
 
+        # Timeline (new in Stage 8)
+        assert "timeline" in data
+        assert isinstance(data["timeline"], list)
+        assert len(data["timeline"]) >= 1
+
+        # Tracking URL (new in Stage 8)
+        assert "tracking_url" in data
+        assert data["tracking_url"].startswith("https://goldenhour.app/track/gh_")
+
     def test_snakebite_emergency(self):
         """Snakebite should route to hospital with antivenom."""
         response = client.post(

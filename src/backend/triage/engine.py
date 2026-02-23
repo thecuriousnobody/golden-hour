@@ -22,18 +22,26 @@ class ExtractedSymptom(BaseModel):
     key: str = Field(description="Category: Emergency, Symptom, Patient, Concern, Urgency")
     value: str = Field(description="Description of the symptom or finding")
     critical: bool = Field(description="True if this is life-threatening")
+    body_system: str = Field(default="general", description="Body system: cardiac, respiratory, neurological, musculoskeletal, integumentary, gastrointestinal, general")
+    onset: str = Field(default="unknown", description="Onset timing: acute, gradual, unknown")
 
 
 class TriageAssessment(BaseModel):
     symptoms: list[ExtractedSymptom] = Field(description="Extracted medical symptoms")
     likely_condition: str = Field(description="Most likely medical condition")
+    differential_diagnoses: list[str] = Field(default_factory=list, description="Alternative possible conditions")
     severity: str = Field(description="CRITICAL, HIGH, MODERATE, or LOW")
     esi_level: int = Field(ge=1, le=5, description="ESI triage level (1=most urgent, 5=least)")
     triage_score: int = Field(ge=1, le=10, description="Triage score (1=minor, 10=life-threatening)")
     required_capabilities: list[str] = Field(description="Hospital capabilities needed (e.g. cath_lab, trauma_center, icu)")
+    recommended_first_aid: list[str] = Field(default_factory=list, description="Immediate first aid steps for bystanders")
     reasoning: str = Field(description="Brief clinical reasoning (1-2 sentences)")
+    clinical_reasoning: str = Field(default="", description="Detailed clinical reasoning chain")
+    confidence: float = Field(default=0.8, ge=0.0, le=1.0, description="Model confidence in assessment (0-1)")
+    disclaimer: str = Field(default="AI-assisted triage — not a medical diagnosis.", description="Clinical disclaimer")
     time_criticality_minutes: int = Field(description="Estimated time window for intervention in minutes")
     patient_demographics: str = Field(default="unknown", description="Age/gender if discernible from context")
+    triage_source: str = Field(default="keyword", description="Source: claude, gemini, keyword")
 
 
 # ---------------------------------------------------------------------------
@@ -172,58 +180,99 @@ def _keyword_fallback(transcript: str) -> TriageAssessment:
         return TriageAssessment(
             symptoms=symptoms,
             likely_condition=condition,
+            differential_diagnoses=[],
             severity=severity,
             esi_level=esi,
             triage_score=score,
             required_capabilities=sorted(all_capabilities),
+            recommended_first_aid=[],
             reasoning=f"Keyword-based fallback triage. Matched: {', '.join(all_matched_keywords)}. AI-assisted triage — not a medical diagnosis.",
+            clinical_reasoning=f"Keyword match: {', '.join(all_matched_keywords)}",
+            confidence=0.6,
             time_criticality_minutes=time_min,
             patient_demographics="unknown",
+            triage_source="keyword",
         )
 
     # Nothing matched — return a generic moderate assessment
     return TriageAssessment(
         symptoms=[ExtractedSymptom(key="Concern", value="Unclassified emergency", critical=False)],
         likely_condition="Unclassified Emergency",
+        differential_diagnoses=[],
         severity="MODERATE",
         esi_level=3,
         triage_score=5,
         required_capabilities=["icu"],
+        recommended_first_aid=[],
         reasoning="No specific symptoms matched. Defaulting to moderate severity. AI-assisted triage — not a medical diagnosis.",
+        clinical_reasoning="No keyword matches found",
+        confidence=0.3,
         time_criticality_minutes=30,
         patient_demographics="unknown",
+        triage_source="keyword",
     )
 
 
 # ---------------------------------------------------------------------------
-# Main triage function — Claude API with keyword fallback
+# JSON schema for structured output
 # ---------------------------------------------------------------------------
 
-async def run_triage(transcript: str, language: str = "en") -> TriageAssessment:
-    """Run AI triage on an emergency transcript.
+TRIAGE_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "symptoms": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string"},
+                    "value": {"type": "string"},
+                    "critical": {"type": "boolean"},
+                    "body_system": {"type": "string"},
+                    "onset": {"type": "string"},
+                },
+                "required": ["key", "value", "critical"],
+            },
+        },
+        "likely_condition": {"type": "string"},
+        "differential_diagnoses": {"type": "array", "items": {"type": "string"}},
+        "severity": {"type": "string", "enum": ["CRITICAL", "HIGH", "MODERATE", "LOW"]},
+        "esi_level": {"type": "integer", "minimum": 1, "maximum": 5},
+        "triage_score": {"type": "integer", "minimum": 1, "maximum": 10},
+        "required_capabilities": {"type": "array", "items": {"type": "string"}},
+        "recommended_first_aid": {"type": "array", "items": {"type": "string"}},
+        "reasoning": {"type": "string"},
+        "clinical_reasoning": {"type": "string"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+        "time_criticality_minutes": {"type": "integer"},
+        "patient_demographics": {"type": "string"},
+    },
+    "required": [
+        "symptoms", "likely_condition", "severity", "esi_level",
+        "triage_score", "required_capabilities", "reasoning",
+        "time_criticality_minutes",
+    ],
+}
 
-    Uses Claude API for intelligent symptom extraction and ESI classification.
-    Falls back to keyword matching if API is unavailable.
 
-    Args:
-        transcript: English text of the emergency call (already translated if needed).
-        language: Original language code (e.g. 'kn' for Kannada, 'hi' for Hindi).
+# ---------------------------------------------------------------------------
+# Tier 1: Claude API triage (structured output)
+# ---------------------------------------------------------------------------
 
-    Returns:
-        TriageAssessment with symptoms, severity, required capabilities, etc.
+async def _claude_triage(transcript: str, language: str) -> TriageAssessment | None:
+    """Tier 1: Claude API with structured JSON output.
+
+    Returns None if Claude is unavailable or fails, so caller can fall through.
     """
     api_key = os.getenv("ANTHROPIC_API_KEY")
-
     if not api_key or api_key.startswith("your_"):
-        logger.warning("No ANTHROPIC_API_KEY configured — using keyword fallback")
-        return _keyword_fallback(transcript)
+        return None
 
     try:
         client = anthropic.AsyncAnthropic(api_key=api_key)
 
-        user_message = f"Emergency call transcript (English translation from {language}):\n\"{transcript}\""
+        user_message = f"Emergency call transcript (English translation from {language}):\n\"{transcript}\"\n\nRespond with JSON matching the schema."
 
-        # Use Claude with explicit JSON schema instructions
         response = await client.messages.create(
             model="claude-sonnet-4-5-20250929",
             max_tokens=1024,
@@ -244,19 +293,118 @@ async def run_triage(transcript: str, language: str = "en") -> TriageAssessment:
 
         raw = json.loads(json_text)
 
-        # Map from Claude's camelCase output to our snake_case model
         return TriageAssessment(
             symptoms=[ExtractedSymptom(**s) for s in raw.get("symptoms", [])],
             likely_condition=raw.get("likelyCondition", raw.get("likely_condition", "Unknown")),
+            differential_diagnoses=raw.get("differentialDiagnoses", raw.get("differential_diagnoses", [])),
             severity=raw.get("severity", "MODERATE"),
             esi_level=raw.get("esiLevel", raw.get("esi_level", 3)),
             triage_score=raw.get("triageScore", raw.get("triage_score", 5)),
             required_capabilities=raw.get("requiredCapabilities", raw.get("required_capabilities", [])),
+            recommended_first_aid=raw.get("recommendedFirstAid", raw.get("recommended_first_aid", [])),
             reasoning=raw.get("reasoning", ""),
+            clinical_reasoning=raw.get("clinicalReasoning", raw.get("clinical_reasoning", "")),
+            confidence=raw.get("confidence", 0.85),
             time_criticality_minutes=raw.get("timeCriticalityMinutes", raw.get("time_criticality_minutes", 30)),
             patient_demographics=raw.get("patientDemographics", raw.get("patient_demographics", "unknown")),
+            triage_source="claude",
         )
 
     except Exception as e:
-        logger.error("Claude triage failed, falling back to keywords: %s", e)
-        return _keyword_fallback(transcript)
+        logger.error("Claude triage failed: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Tier 2: Gemini fallback (free tier)
+# ---------------------------------------------------------------------------
+
+async def _gemini_triage(transcript: str, language: str) -> TriageAssessment | None:
+    """Tier 2: Google Gemini 2.5 Flash (free tier) fallback.
+
+    Returns None if Gemini is unavailable or fails.
+    """
+    gemini_key = os.getenv("GOOGLE_GEMINI_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
+    if not gemini_key or gemini_key.startswith("your_"):
+        return None
+
+    try:
+        import google.generativeai as genai
+
+        genai.configure(api_key=gemini_key)
+        model = genai.GenerativeModel("gemini-2.5-flash-preview-05-20")
+
+        prompt = (
+            f"{TRIAGE_SYSTEM_PROMPT}\n\n"
+            f"Emergency call transcript (English translation from {language}):\n\"{transcript}\"\n\n"
+            f"Respond ONLY with valid JSON matching this schema:\n{json.dumps(TRIAGE_JSON_SCHEMA, indent=2)}"
+        )
+
+        response = model.generate_content(prompt)
+        json_text = response.text.strip()
+
+        # Strip markdown fences
+        if json_text.startswith("```"):
+            json_text = json_text.split("\n", 1)[1] if "\n" in json_text else json_text[3:]
+            if json_text.endswith("```"):
+                json_text = json_text[:-3].strip()
+
+        raw = json.loads(json_text)
+
+        return TriageAssessment(
+            symptoms=[ExtractedSymptom(**s) for s in raw.get("symptoms", [])],
+            likely_condition=raw.get("likely_condition", "Unknown"),
+            differential_diagnoses=raw.get("differential_diagnoses", []),
+            severity=raw.get("severity", "MODERATE"),
+            esi_level=raw.get("esi_level", 3),
+            triage_score=raw.get("triage_score", 5),
+            required_capabilities=raw.get("required_capabilities", []),
+            recommended_first_aid=raw.get("recommended_first_aid", []),
+            reasoning=raw.get("reasoning", ""),
+            clinical_reasoning=raw.get("clinical_reasoning", ""),
+            confidence=raw.get("confidence", 0.75),
+            time_criticality_minutes=raw.get("time_criticality_minutes", 30),
+            patient_demographics=raw.get("patient_demographics", "unknown"),
+            triage_source="gemini",
+        )
+
+    except Exception as e:
+        logger.error("Gemini triage failed: %s", e)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Main triage function — Claude -> Gemini -> keyword fallback
+# ---------------------------------------------------------------------------
+
+async def run_triage(transcript: str, language: str = "en") -> TriageAssessment:
+    """Run AI triage on an emergency transcript.
+
+    Three-tier fallback chain:
+    1. Claude API (structured output) — highest quality
+    2. Gemini 2.5 Flash (free tier) — good quality, free
+    3. Keyword matching — instant, no API needed
+
+    Args:
+        transcript: English text of the emergency call (already translated if needed).
+        language: Original language code (e.g. 'kn' for Kannada, 'hi' for Hindi).
+
+    Returns:
+        TriageAssessment with symptoms, severity, required capabilities, etc.
+    """
+    # Tier 1: Claude
+    result = await _claude_triage(transcript, language)
+    if result:
+        logger.info("Triage via Claude: %s (%s)", result.likely_condition, result.severity)
+        return result
+
+    # Tier 2: Gemini
+    logger.info("Claude unavailable, trying Gemini fallback...")
+    result = await _gemini_triage(transcript, language)
+    if result:
+        logger.info("Triage via Gemini: %s (%s)", result.likely_condition, result.severity)
+        return result
+
+    # Tier 3: Keyword fallback
+    logger.warning("All AI triage unavailable — using keyword fallback")
+    return _keyword_fallback(transcript)

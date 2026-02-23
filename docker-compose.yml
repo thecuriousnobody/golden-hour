@@ -21,6 +21,32 @@ services:
     volumes:
       - redis_data:/data
 
+  celery-worker:
+    build: .
+    container_name: golden-hour-celery-worker
+    command: celery -A src.backend.tasks.celery_app worker --loglevel=info
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql://golden_hour:password@postgres:5432/golden_hour
+    depends_on:
+      - redis
+      - postgres
+    volumes:
+      - .:/app
+    working_dir: /app
+
+  celery-beat:
+    build: .
+    container_name: golden-hour-celery-beat
+    command: celery -A src.backend.tasks.celery_app beat --loglevel=info
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    volumes:
+      - .:/app
+    working_dir: /app
+
 volumes:
   postgres_data:
   redis_data:

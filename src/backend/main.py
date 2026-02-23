@@ -15,6 +15,7 @@ from src.backend.triage.router import router as triage_router
 from src.backend.dispatch.router import router as dispatch_router
 from src.backend.notifications.router import router as notifications_router
 from src.backend.pipeline import router as pipeline_router
+from src.backend.realtime.router import router as realtime_router
 from src.backend.dispatch.hospital_matcher import load_hospitals
 
 logging.basicConfig(level=logging.INFO, format="%(name)s | %(levelname)s | %(message)s")
@@ -25,6 +26,21 @@ async def lifespan(app: FastAPI):
     # Startup
     print("Golden Hour API starting up...")
     load_hospitals()
+
+    # Non-blocking DB connection test
+    try:
+        from src.backend.db.base import check_db_connection
+        await check_db_connection()
+    except Exception as e:
+        logging.getLogger("golden_hour").info("DB check skipped: %s", e)
+
+    # Non-blocking Redis connection test
+    try:
+        from src.backend.realtime.pubsub import check_redis_connection
+        await check_redis_connection()
+    except Exception as e:
+        logging.getLogger("golden_hour").info("Redis check skipped: %s", e)
+
     yield
     # Shutdown
     print("Golden Hour API shutting down...")
@@ -50,6 +66,7 @@ app.include_router(triage_router, prefix="/api/v1/triage", tags=["triage"])
 app.include_router(dispatch_router, prefix="/api/v1/dispatch", tags=["dispatch"])
 app.include_router(notifications_router, prefix="/api/v1/notifications", tags=["notifications"])
 app.include_router(pipeline_router, prefix="/api/v1", tags=["pipeline"])
+app.include_router(realtime_router, prefix="/api/v1/realtime", tags=["realtime"])
 
 
 @app.get("/")

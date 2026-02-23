@@ -34,6 +34,7 @@ from src.backend.dispatch.whatsapp import (
     send_whatsapp_message,
     get_message_log,
 )
+from src.backend.dispatch.session_store import session_store
 
 logger = logging.getLogger("golden_hour.dispatch")
 
@@ -71,6 +72,7 @@ class DispatchResult:
     channels: list[ChannelResult]
     hospital_match: dict | None = None
     all_messages: list[dict] = field(default_factory=list)
+    timeline: list[dict] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -432,6 +434,11 @@ async def run_dispatch(
         session_id, assessment.likely_condition, assessment.severity, caller.lat, caller.lng,
     )
 
+    # Create state machine session
+    sm_session = session_store.create(session_id)
+    sm_session.transition_to("start_triage")
+    sm_session.transition_to("start_dispatch")
+
     # Ensure hospitals are loaded
     load_hospitals()
 
@@ -506,4 +513,5 @@ async def run_dispatch(
         channels=channels,
         hospital_match=hospital_match_dict,
         all_messages=get_message_log(),
+        timeline=sm_session.timeline,
     )
