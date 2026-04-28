@@ -8,10 +8,12 @@ interface SeedHospital {
   lng: number;
   capabilities: string[];
   phone?: string;
+  city?: string;
 }
 
 interface RawSeedRow {
   name: string;
+  city?: string;
   address?: string;
   lat?: number;
   lng?: number;
@@ -24,38 +26,52 @@ interface RawSeedRow {
   whatsapp_number?: string;
 }
 
+const REGIONS = ["bangalore.json", "peoria.json"];
+
 let cache: SeedHospital[] | null = null;
 
-/** Load /data/hospitals/bangalore.json from the repo root. Cached after first read. */
+/** Load all region seed files from /data/hospitals. Cached after first read. */
 export async function loadSeedHospitals(): Promise<SeedHospital[]> {
   if (cache) return cache;
 
-  const candidates = [
-    path.join(process.cwd(), "..", "data", "hospitals", "bangalore.json"),
-    path.join(process.cwd(), "data", "hospitals", "bangalore.json"),
+  const baseCandidates = [
+    path.join(process.cwd(), "..", "data", "hospitals"),
+    path.join(process.cwd(), "data", "hospitals"),
   ];
 
-  for (const p of candidates) {
-    try {
-      const raw = await fs.readFile(p, "utf-8");
-      const parsed = JSON.parse(raw) as RawSeedRow[] | { hospitals: RawSeedRow[] };
-      const list: RawSeedRow[] = Array.isArray(parsed) ? parsed : parsed.hospitals ?? [];
+  const merged: SeedHospital[] = [];
 
-      cache = list.map((h) => ({
-        name: h.name,
-        address: h.address ?? "",
-        lat: h.location?.lat ?? h.lat ?? h.latitude ?? 0,
-        lng: h.location?.lng ?? h.lng ?? h.longitude ?? 0,
-        capabilities: h.capabilities ?? [],
-        phone: h.phone ?? h.emergency_contact ?? h.whatsapp_number,
-      }));
-      return cache;
-    } catch {
-      // try next path
+  for (const region of REGIONS) {
+    let loaded = false;
+    for (const base of baseCandidates) {
+      const p = path.join(base, region);
+      try {
+        const raw = await fs.readFile(p, "utf-8");
+        const parsed = JSON.parse(raw) as RawSeedRow[] | { hospitals: RawSeedRow[] };
+        const list: RawSeedRow[] = Array.isArray(parsed) ? parsed : parsed.hospitals ?? [];
+
+        for (const h of list) {
+          merged.push({
+            name: h.name,
+            city: h.city,
+            address: h.address ?? "",
+            lat: h.location?.lat ?? h.lat ?? h.latitude ?? 0,
+            lng: h.location?.lng ?? h.lng ?? h.longitude ?? 0,
+            capabilities: h.capabilities ?? [],
+            phone: h.phone ?? h.emergency_contact ?? h.whatsapp_number,
+          });
+        }
+        loaded = true;
+        break;
+      } catch {
+        // try next base path
+      }
+    }
+    if (!loaded) {
+      console.warn(`[hospitals-seed] ${region} not found in any candidate path`);
     }
   }
 
-  console.warn("[hospitals-seed] data/hospitals/bangalore.json not found — empty seed");
-  cache = [];
+  cache = merged;
   return cache;
 }

@@ -1,0 +1,107 @@
+[
+  {
+    "id": "osf-saint-francis-peoria",
+    "name": "OSF HealthCare Saint Francis Medical Center",
+    "city": "peoria",
+    "capabilities": [
+      "cath_lab",
+      "ct_scan",
+      "trauma_center",
+      "burn_unit",
+      "icu",
+      "ventilator",
+      "pediatric",
+      "obstetric",
+      "neurosurgery",
+      "orthopedic",
+      "dialysis",
+      "nicu",
+      "blood_bank",
+      "stroke_unit"
+    ],
+    "address": "530 NE Glen Oak Ave, Peoria, IL 61637",
+    "location": { "lat": 40.7016, "lng": -89.5829 },
+    "emergency_contact": "+1-309-655-2000",
+    "whatsapp_number": "+1-309-655-2000",
+    "notes": "Level I Trauma Center, Comprehensive Stroke Center, regional referral hub for downstate Illinois.",
+    "verified": false,
+    "verified_date": null
+  },
+  {
+    "id": "osf-childrens-illinois",
+    "name": "OSF Children's Hospital of Illinois",
+    "city": "peoria",
+    "capabilities": [
+      "pediatric",
+      "nicu",
+      "icu",
+      "ventilator",
+      "ct_scan",
+      "blood_bank"
+    ],
+    "address": "420 NE Glen Oak Ave, Peoria, IL 61603",
+    "location": { "lat": 40.7019, "lng": -89.5832 },
+    "emergency_contact": "+1-309-655-2000",
+    "whatsapp_number": "+1-309-655-2000",
+    "notes": "Pediatric Level I Trauma; co-located with Saint Francis campus.",
+    "verified": false,
+    "verified_date": null
+  },
+  {
+    "id": "unitypoint-methodist-peoria",
+    "name": "UnityPoint Health - Methodist",
+    "city": "peoria",
+    "capabilities": [
+      "cath_lab",
+      "ct_scan",
+      "icu",
+      "ventilator",
+      "orthopedic",
+      "stroke_unit",
+      "blood_bank",
+      "obstetric"
+    ],
+    "address": "221 NE Glen Oak Ave, Peoria, IL 61636",
+    "location": { "lat": 40.7011, "lng": -89.5868 },
+    "emergency_contact": "+1-309-672-5522",
+    "whatsapp_number": "+1-309-672-5522",
+    "notes": "Primary Stroke Center, full cardiac cath lab, downtown Peoria.",
+    "verified": false,
+    "verified_date": null
+  },
+  {
+    "id": "unitypoint-proctor-peoria",
+    "name": "UnityPoint Health - Proctor",
+    "city": "peoria",
+    "capabilities": [
+      "ct_scan",
+      "icu",
+      "orthopedic",
+      "blood_bank"
+    ],
+    "address": "5409 N Knoxville Ave, Peoria, IL 61614",
+    "location": { "lat": 40.7475, "lng": -89.5865 },
+    "emergency_contact": "+1-309-691-1000",
+    "whatsapp_number": "+1-309-691-1000",
+    "notes": "Community ER, ortho specialty, north Peoria.",
+    "verified": false,
+    "verified_date": null
+  },
+  {
+    "id": "unitypoint-pekin",
+    "name": "UnityPoint Health - Pekin",
+    "city": "pekin",
+    "capabilities": [
+      "ct_scan",
+      "icu",
+      "blood_bank"
+    ],
+    "address": "600 S 13th St, Pekin, IL 61554",
+    "location": { "lat": 40.567, "lng": -89.6398 },
+    "emergency_contact": "+1-309-347-1151",
+    "whatsapp_number": "+1-309-347-1151",
+    "notes": "Community hospital, basic ER + ICU, ~10 mi south of Peoria.",
+    "verified": false,
+    "verified_date": null
+  }
+]

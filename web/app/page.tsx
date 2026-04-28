@@ -5,45 +5,66 @@ import { useChat } from "@ai-sdk/react";
 import { DefaultChatTransport } from "ai";
 import type { CallerContext } from "@/lib/types";
 import {
+  isSpeechRecognitionSupported,
   isRecordingSupported,
+  startLiveRecognition,
   startRecording,
   transcribeAndTranslate,
   languageName,
 } from "@/lib/speech";
+import { requestGeolocation, PEORIA_FALLBACK, type GeoFix } from "@/lib/geo";
 import { renderMarkdown } from "@/lib/markdown";
 
 const SAMPLE_PROMPTS = [
-  "My grandfather is clutching his chest and sweating heavily. We're at MG Road, Bangalore. He's 72.",
-  "Snake bit my brother in the field. His leg is swelling fast. We're outside Bangalore in Anekal.",
-  "There's been a road accident on Outer Ring Road. Two people unconscious, heavy bleeding from one.",
-  "My wife is in labor, water broke 20 minutes ago, contractions are 3 minutes apart. Indiranagar.",
+  "My grandfather is clutching his chest and sweating heavily. He's 72.",
+  "There's been a road accident on Knoxville Ave. Two people unconscious, one bleeding heavily.",
+  "My wife is in labor, water broke 20 minutes ago, contractions are 3 minutes apart.",
+  "My son fell from a tree, his arm is bent the wrong way and he's crying in pain.",
 ];
 
-const BANGALORE_LOCATIONS: Record<string, { lat: number; lng: number }> = {
-  "MG Road (central)": { lat: 12.9716, lng: 77.5946 },
-  Indiranagar: { lat: 12.9784, lng: 77.6408 },
-  Koramangala: { lat: 12.9352, lng: 77.6245 },
-  Whitefield: { lat: 12.9698, lng: 77.7499 },
-  "Anekal (south)": { lat: 12.7, lng: 77.7 },
-};
+/**
+ * Language modes:
+ *  - "en-US"   → Web Speech API live transcript (browser-native, free, instant)
+ *  - "auto-in" → MediaRecorder + Sarvam STT-translate (auto-detects Indian lang → English)
+ *  - any other → Web Speech API tries that lang code (Chrome supports kn-IN, hi-IN, etc.
+ *    natively but quality varies; auto-in is usually better for Indian langs)
+ */
+const VOICE_MODES: { code: string; label: string; engine: "web" | "sarvam" }[] = [
+  { code: "en-US", label: "English (live)", engine: "web" },
+  { code: "auto-in", label: "Indian language — auto-detect", engine: "sarvam" },
+  { code: "kn-IN", label: "Kannada (browser)", engine: "web" },
+  { code: "hi-IN", label: "Hindi (browser)", engine: "web" },
+  { code: "ta-IN", label: "Tamil (browser)", engine: "web" },
+  { code: "te-IN", label: "Telugu (browser)", engine: "web" },
+];
 
 export default function Home() {
-  const [locationName, setLocationName] = useState("MG Road (central)");
+  const [geo, setGeo] = useState<GeoFix>(PEORIA_FALLBACK);
+  const [geoStatus, setGeoStatus] = useState<"requesting" | "ready">("requesting");
+  const [voiceMode, setVoiceMode] = useState<string>("en-US");
+
   const callerRef = useRef<CallerContext>({
-    lat: 12.9716,
-    lng: 77.5946,
+    lat: PEORIA_FALLBACK.lat,
+    lng: PEORIA_FALLBACK.lng,
     language: "en",
     name: "Demo Caller",
-    phone: "+919999999999",
-    familyContacts: [{ name: "Spouse", phone: "+918888888888" }],
+    phone: "+13095550100",
+    familyContacts: [{ name: "Spouse", phone: "+13095550199" }],
   });
 
+  // Request real GPS on mount
   useEffect(() => {
-    const loc = BANGALORE_LOCATIONS[locationName];
-    if (loc) {
-      callerRef.current = { ...callerRef.current, lat: loc.lat, lng: loc.lng };
-    }
-  }, [locationName]);
+    let cancelled = false;
+    requestGeolocation().then((fix) => {
+      if (cancelled) return;
+      setGeo(fix);
+      setGeoStatus("ready");
+      callerRef.current = { ...callerRef.current, lat: fix.lat, lng: fix.lng };
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [typedInput, setTypedInput] = useState("");
   const { messages, sendMessage, status, error } = useChat({
@@ -66,28 +87,15 @@ export default function Home() {
     <main className="min-h-screen max-w-3xl mx-auto px-4 pb-32 pt-6 flex flex-col">
       {/* Compact top bar */}
       <header className="flex items-center justify-between gap-3 text-xs">
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 min-w-0">
           <span className="text-lg">🚑</span>
           <span className="font-bold tracking-tight text-base" style={{ color: "var(--accent)" }}>
             Golden Hour
           </span>
           <span className="text-white/30">·</span>
-          <span className="text-white/50">AI emergency dispatcher</span>
+          <span className="text-white/50 truncate">AI emergency dispatcher</span>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="text-white/40">📍</span>
-          <select
-            value={locationName}
-            onChange={(e) => setLocationName(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs"
-          >
-            {Object.keys(BANGALORE_LOCATIONS).map((n) => (
-              <option key={n} value={n}>
-                {n}
-              </option>
-            ))}
-          </select>
-        </div>
+        <GpsBadge geo={geo} status={geoStatus} />
       </header>
 
       {/* Pipeline strip */}
@@ -95,9 +103,25 @@ export default function Home() {
         <PipelineStages messages={messages} status={status} />
       </div>
 
-      {/* Hero: big mic when idle, or conversation */}
+      {/* Voice mode selector */}
+      <div className="mt-3 flex items-center justify-center gap-2 text-[11px]">
+        <span className="text-white/40">Voice:</span>
+        <select
+          value={voiceMode}
+          onChange={(e) => setVoiceMode(e.target.value)}
+          className="bg-white/5 border border-white/10 rounded px-2 py-1 text-xs"
+        >
+          {VOICE_MODES.map((m) => (
+            <option key={m.code} value={m.code}>
+              {m.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Hero or conversation */}
       {!hasMessages ? (
-        <HeroPanel onSubmit={submit} />
+        <HeroPanel onSubmit={submit} voiceMode={voiceMode} />
       ) : (
         <section className="flex-1 flex flex-col gap-4 mt-4">
           {messages.map((m) => (
@@ -110,13 +134,13 @@ export default function Home() {
         </section>
       )}
 
-      {/* Bottom: smaller mic + typed fallback (only after first message) */}
       {hasMessages && (
         <BottomBar
           typedInput={typedInput}
           setTypedInput={setTypedInput}
           onSubmit={submit}
           disabled={status === "streaming"}
+          voiceMode={voiceMode}
         />
       )}
     </main>
@@ -124,13 +148,50 @@ export default function Home() {
 }
 
 // ===========================================================================
-// Hero panel — giant mic button, prominent for low-literacy users
+// GPS badge — shows real coords + accuracy or fallback indicator
 // ===========================================================================
 
-function HeroPanel({ onSubmit }: { onSubmit: (text: string, language: string) => void }) {
+function GpsBadge({ geo, status }: { geo: GeoFix; status: "requesting" | "ready" }) {
+  if (status === "requesting") {
+    return (
+      <span className="text-white/40 flex items-center gap-1.5">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+        locating…
+      </span>
+    );
+  }
+  const isReal = geo.source === "browser";
+  return (
+    <div className="flex items-center gap-2 text-[11px]">
+      <span className={isReal ? "text-emerald-400" : "text-amber-400"}>📍</span>
+      <span className="text-white/70 font-mono">
+        {geo.lat.toFixed(4)}, {geo.lng.toFixed(4)}
+      </span>
+      {isReal ? (
+        <span className="text-emerald-400/80">
+          {geo.accuracyMeters ? `±${Math.round(geo.accuracyMeters)}m` : "live"}
+        </span>
+      ) : (
+        <span className="text-amber-400/80">fallback</span>
+      )}
+    </div>
+  );
+}
+
+// ===========================================================================
+// Hero panel — giant mic button
+// ===========================================================================
+
+function HeroPanel({
+  onSubmit,
+  voiceMode,
+}: {
+  onSubmit: (text: string, language: string) => void;
+  voiceMode: string;
+}) {
   return (
     <section className="flex-1 flex flex-col items-center justify-center gap-8 mt-6">
-      <GiantMic onSubmit={onSubmit} />
+      <GiantMic onSubmit={onSubmit} voiceMode={voiceMode} />
 
       <div className="w-full max-w-md">
         <p className="text-xs text-white/40 mb-2 text-center">or try a scenario</p>
@@ -150,69 +211,124 @@ function HeroPanel({ onSubmit }: { onSubmit: (text: string, language: string) =>
   );
 }
 
+function getEngine(voiceMode: string): "web" | "sarvam" {
+  return VOICE_MODES.find((m) => m.code === voiceMode)?.engine ?? "web";
+}
+
 // ===========================================================================
-// Giant mic — the centerpiece for low-literacy, multilingual callers
+// Giant mic — Web Speech API in en-US
 // ===========================================================================
 
-function GiantMic({ onSubmit }: { onSubmit: (text: string, language: string) => void }) {
+function GiantMic({
+  onSubmit,
+  voiceMode,
+}: {
+  onSubmit: (text: string, language: string) => void;
+  voiceMode: string;
+}) {
   const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
-  const [original, setOriginal] = useState("");
-  const [english, setEnglish] = useState("");
-  const [detectedLang, setDetectedLang] = useState<string>("");
+  const [transcript, setTranscript] = useState("");
+  const [englishText, setEnglishText] = useState("");
+  const [detectedLang, setDetectedLang] = useState("");
   const [err, setErr] = useState<string | null>(null);
-  const handleRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+  const liveRef = useRef<{ stop: () => void } | null>(null);
+  const recRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+  const transcriptRef = useRef("");
+
+  const engine = getEngine(voiceMode);
 
   const onTap = async () => {
     if (state === "idle") {
       setErr(null);
-      setOriginal("");
-      setEnglish("");
+      setTranscript("");
+      setEnglishText("");
       setDetectedLang("");
-      if (!isRecordingSupported()) {
-        setErr("Voice recording not supported in this browser.");
-        return;
-      }
-      try {
-        const h = await startRecording();
-        handleRef.current = h;
-        setState("recording");
-      } catch (e) {
-        setErr("Microphone permission denied. Please enable mic access.");
+      transcriptRef.current = "";
+
+      if (engine === "web") {
+        if (!isSpeechRecognitionSupported()) {
+          setErr("Voice not supported. Use Chrome or Edge.");
+          return;
+        }
+        const h = startLiveRecognition(
+          voiceMode,
+          (t) => {
+            setTranscript(t.transcript);
+            transcriptRef.current = t.transcript;
+          },
+          (msg) => {
+            setErr(msg);
+            setState("idle");
+          }
+        );
+        if (h) {
+          liveRef.current = h;
+          setState("recording");
+        }
+      } else {
+        // Sarvam path: record audio, upload on stop
+        if (!isRecordingSupported()) {
+          setErr("Audio recording not supported in this browser.");
+          return;
+        }
+        try {
+          const r = await startRecording();
+          recRef.current = r;
+          setState("recording");
+        } catch {
+          setErr("Microphone permission denied.");
+        }
       }
       return;
     }
 
-    if (state === "recording") {
+    if (state === "recording" && engine === "web") {
+      liveRef.current?.stop();
+      setState("idle");
+      const finalText = transcriptRef.current.trim();
+      if (!finalText) {
+        setErr("Didn't catch that — try again.");
+        return;
+      }
+      const langPrefix = voiceMode.split("-")[0];
+      onSubmit(finalText, langPrefix);
+      setTimeout(() => setTranscript(""), 1200);
+      return;
+    }
+
+    if (state === "recording" && engine === "sarvam") {
       setState("processing");
-      const blob = await handleRef.current!.stop();
+      const blob = await recRef.current!.stop();
       const result = await transcribeAndTranslate(blob);
       if (result.error) {
         setErr(result.error);
         setState("idle");
         return;
       }
-      setOriginal(result.transcript);
-      setEnglish(result.englishText);
+      setTranscript(result.transcript);
+      setEnglishText(result.englishText);
       setDetectedLang(result.detectedLanguage);
-
       if (result.englishText.trim()) {
-        // Briefly display, then dispatch
         setTimeout(() => {
           onSubmit(result.englishText, (result.detectedLanguage || "en").split("-")[0]);
-          setOriginal("");
-          setEnglish("");
+          setTranscript("");
+          setEnglishText("");
           setDetectedLang("");
           setState("idle");
         }, 1400);
       } else {
-        setErr("Didn't catch that. Try again.");
+        setErr("Didn't catch that — try again.");
         setState("idle");
       }
     }
   };
 
   const label =
-    state === "idle" ? "Tap to speak" : state === "recording" ? "Listening… tap to stop" : "Transcribing…";
+    state === "idle"
+      ? "Tap to speak"
+      : state === "recording"
+      ? "Listening… tap to dispatch"
+      : "Transcribing…";
 
   return (
     <div className="flex flex-col items-center gap-5">
@@ -238,29 +354,30 @@ function GiantMic({ onSubmit }: { onSubmit: (text: string, language: string) => 
       </button>
 
       <div className="text-center min-h-[2rem]">
-        <div
-          className={`text-sm font-medium ${
-            state === "recording" ? "text-red-400" : "text-white/80"
-          }`}
-        >
+        <div className={`text-sm font-medium ${state === "recording" ? "text-red-400" : "text-white/80"}`}>
           {label}
         </div>
         <div className="text-xs text-white/40 mt-1">
-          Speak in any Indian language — we auto-detect
+          {engine === "sarvam"
+            ? "Speak any Indian language — we auto-detect"
+            : "Describe the emergency — who, what, where"}
         </div>
       </div>
 
-      {/* Live transcripts */}
-      {(original || english || detectedLang) && (
+      {(transcript || englishText) && (
         <div className="w-full max-w-md p-3 rounded-xl bg-white/5 border border-white/10 text-sm space-y-2">
           {detectedLang && (
             <div className="text-[10px] uppercase tracking-wider text-emerald-400">
               🌐 Detected: {languageName(detectedLang)}
             </div>
           )}
-          {english && (
-            <div className="text-white/90">
-              {english}
+          {transcript && (
+            <div className="text-white/90">{transcript}</div>
+          )}
+          {englishText && englishText !== transcript && (
+            <div className="text-white/60 text-xs border-t border-white/10 pt-2">
+              <span className="text-[10px] uppercase tracking-wider mr-2">EN</span>
+              {englishText}
             </div>
           )}
         </div>
@@ -277,7 +394,7 @@ function GiantMic({ onSubmit }: { onSubmit: (text: string, language: string) => 
 }
 
 // ===========================================================================
-// Pipeline stages — the transparent agent journey
+// Pipeline stages
 // ===========================================================================
 
 interface MessagePart {
@@ -295,7 +412,6 @@ interface MessageShape {
 
 const STAGES = [
   { key: "voice", label: "🎤 Voice", tools: [] as string[] },
-  { key: "translate", label: "🌐 Translate", tools: [] as string[] },
   { key: "triage", label: "🩺 Triage", tools: ["triagePatient"] },
   { key: "match", label: "🏥 Hospital", tools: ["findHospitals"] },
   { key: "dispatch", label: "📱 Dispatch", tools: ["sendWhatsApp"] },
@@ -314,14 +430,12 @@ function PipelineStages({
       if (p.type?.startsWith("tool-") && p.toolName) firedTools.add(p.toolName);
     }
   }
-  // Consider voice+translate fired if we have any user messages
   const hasUser = messages.some((m) => m.role === "user");
 
   return (
     <div className="flex items-center gap-1.5 text-[11px] flex-wrap justify-center">
       {STAGES.map((s, i) => {
-        const autoFired =
-          (s.key === "voice" || s.key === "translate") && hasUser;
+        const autoFired = s.key === "voice" && hasUser;
         const toolFired = s.tools.some((t) => firedTools.has(t));
         const fired = autoFired || toolFired;
         const isActive = status === "streaming";
@@ -345,7 +459,7 @@ function PipelineStages({
 }
 
 // ===========================================================================
-// Bottom bar — smaller mic + typed fallback (post-first-message)
+// Bottom bar — small mic + typed fallback
 // ===========================================================================
 
 function BottomBar({
@@ -353,49 +467,78 @@ function BottomBar({
   setTypedInput,
   onSubmit,
   disabled,
+  voiceMode,
 }: {
   typedInput: string;
   setTypedInput: (s: string) => void;
   onSubmit: (text: string, language: string) => void;
   disabled: boolean;
+  voiceMode: string;
 }) {
   const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
-  const [err, setErr] = useState<string | null>(null);
-  const handleRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+  const [transcript, setTranscript] = useState("");
+  const transcriptRef = useRef("");
+  const liveRef = useRef<{ stop: () => void } | null>(null);
+  const recRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+
+  const engine = getEngine(voiceMode);
 
   const onMic = async () => {
     if (state === "idle") {
-      setErr(null);
-      if (!isRecordingSupported()) {
-        setErr("Voice not supported.");
-        return;
-      }
-      try {
-        const h = await startRecording();
-        handleRef.current = h;
-        setState("recording");
-      } catch {
-        setErr("Mic blocked");
+      setTranscript("");
+      transcriptRef.current = "";
+      if (engine === "web") {
+        const h = startLiveRecognition(
+          voiceMode,
+          (t) => {
+            setTranscript(t.transcript);
+            transcriptRef.current = t.transcript;
+          },
+          () => setState("idle")
+        );
+        if (h) {
+          liveRef.current = h;
+          setState("recording");
+        }
+      } else {
+        try {
+          const r = await startRecording();
+          recRef.current = r;
+          setState("recording");
+        } catch {
+          // mic denied
+        }
       }
       return;
     }
-    if (state === "recording") {
+    if (state === "recording" && engine === "web") {
+      liveRef.current?.stop();
+      setState("idle");
+      const finalText = transcriptRef.current.trim();
+      if (finalText) onSubmit(finalText, voiceMode.split("-")[0]);
+      setTranscript("");
+      return;
+    }
+    if (state === "recording" && engine === "sarvam") {
       setState("processing");
-      const blob = await handleRef.current!.stop();
+      const blob = await recRef.current!.stop();
       const r = await transcribeAndTranslate(blob);
       setState("idle");
-      if (r.error || !r.englishText.trim()) {
-        setErr(r.error || "Nothing transcribed");
-        return;
+      if (r.englishText.trim()) {
+        onSubmit(r.englishText, (r.detectedLanguage || "en").split("-")[0]);
       }
-      onSubmit(r.englishText, (r.detectedLanguage || "en").split("-")[0]);
+      setTranscript("");
     }
   };
 
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur border-t border-white/10">
       <div className="max-w-3xl mx-auto px-4 py-3">
-        {err && <div className="text-xs text-red-400 mb-2">{err}</div>}
+        {transcript && (
+          <div className="text-xs text-emerald-300 mb-2 truncate">
+            🎙️ {transcript}
+          </div>
+        )}
         <form
           className="flex gap-2 items-stretch"
           onSubmit={(e) => {
@@ -407,17 +550,15 @@ function BottomBar({
           <button
             type="button"
             onClick={onMic}
-            disabled={disabled || state === "processing"}
+            disabled={disabled}
             className={`w-14 h-14 rounded-full flex items-center justify-center text-2xl transition ${
               state === "recording"
                 ? "bg-red-600 text-white animate-pulse shadow-lg shadow-red-500/50"
-                : state === "processing"
-                ? "bg-amber-500/60 text-black"
                 : "bg-red-500 hover:bg-red-400 text-white"
             } disabled:opacity-40`}
-            title={state === "recording" ? "Tap to stop" : "Tap to speak"}
+            title={state === "recording" ? "Tap to dispatch" : "Tap to speak"}
           >
-            {state === "processing" ? "⏳" : state === "recording" ? "■" : "🎤"}
+            {state === "recording" ? "■" : "🎤"}
           </button>
 
           <input

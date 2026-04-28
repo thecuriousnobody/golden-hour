@@ -9,6 +9,42 @@ const CAPABILITIES = [
   "antivenom", "nicu", "blood_bank", "stroke_unit",
 ] as const;
 
+// Words that don't help distinguish hospitals from one another.
+// Includes chain prefixes (OSF, UnityPoint, Apollo, Fortis, Manipal, etc.) —
+// these identify the chain, not the specific facility, so they should not
+// drive a capability match on their own.
+const STOPWORDS = new Set([
+  // Generic
+  "hospital", "medical", "center", "centre", "healthcare", "health", "of", "the",
+  "and", "&", "for", "system", "campus", "clinic", "memorial", "general",
+  "regional", "community", "university", "saint", "st", "st.",
+  // Chain prefixes (US)
+  "osf", "unitypoint", "carle", "advocate", "ascension", "northwestern", "mercy",
+  // Chain prefixes (India)
+  "apollo", "fortis", "manipal", "narayana", "max", "medanta", "aiims",
+]);
+
+function tokenize(name: string): Set<string> {
+  return new Set(
+    name
+      .toLowerCase()
+      .replace(/[.,'-]/g, " ")
+      .split(/\s+/)
+      .filter((w) => w.length > 1 && !STOPWORDS.has(w))
+  );
+}
+
+/** Jaccard similarity over distinctive tokens (stopwords removed). */
+function nameSimilarity(a: string, b: string): number {
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  let inter = 0;
+  for (const t of ta) if (tb.has(t)) inter++;
+  const union = ta.size + tb.size - inter;
+  return inter / union;
+}
+
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
   const R = 6371;
   const toRad = (d: number) => (d * Math.PI) / 180;
@@ -107,14 +143,20 @@ export function createFindHospitalsTool(caller: CallerContext) {
         const distance = haversineKm(lat, lng, pLat, pLng);
         if (distance > radiusKm) continue;
 
-        // Capability inference: try to match against seed by name fragment
-        const seedMatch = seed.find(
-          (s) =>
-            s.name.toLowerCase().includes(name.toLowerCase().split(" ")[0]) ||
-            name.toLowerCase().includes(s.name.toLowerCase().split(" ")[0])
-        );
-        const capabilities: Capability[] =
-          (seedMatch?.capabilities as Capability[]) ?? ["icu"]; // safe default
+        // Capability inference: pick best seed match by token-Jaccard similarity.
+        // Threshold 0.34 ensures we share at least one distinctive token (e.g.
+        // "francis", "methodist") and not just generic words like "hospital"
+        // or chain prefixes like "OSF" / "UnityPoint" alone.
+        let bestMatch: { hospital: typeof seed[number]; score: number } | null = null;
+        for (const s of seed) {
+          const sim = nameSimilarity(s.name, name);
+          if (sim > 0.34 && (!bestMatch || sim > bestMatch.score)) {
+            bestMatch = { hospital: s, score: sim };
+          }
+        }
+        const capabilities: Capability[] = bestMatch
+          ? (bestMatch.hospital.capabilities as Capability[])
+          : ["icu"]; // safe default — unknown facility, assume basic ER/ICU only
 
         const matched = requiredCapabilities.filter((c) => capabilities.includes(c));
         const missing = requiredCapabilities.filter((c) => !capabilities.includes(c));
@@ -139,15 +181,8 @@ export function createFindHospitalsTool(caller: CallerContext) {
       for (const s of seed) {
         const distance = haversineKm(lat, lng, s.lat, s.lng);
         if (distance > radiusKm) continue;
-        // Skip duplicates (Google name match)
-        if (
-          candidates.some(
-            (c) =>
-              c.name.toLowerCase().includes(s.name.toLowerCase().split(" ")[0]) ||
-              s.name.toLowerCase().includes(c.name.toLowerCase().split(" ")[0])
-          )
-        )
-          continue;
+        // Skip duplicates — same token-similarity check used for matching
+        if (candidates.some((c) => nameSimilarity(c.name, s.name) > 0.34)) continue;
 
         const caps = s.capabilities as Capability[];
         const matched = requiredCapabilities.filter((c) => caps.includes(c));
