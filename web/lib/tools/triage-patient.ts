@@ -46,15 +46,15 @@ const TriageSchema = z.object({
     )
     .describe("Extracted medical symptoms from the transcript"),
   likelyCondition: z.string().describe("Most likely medical condition"),
-  differentialDiagnoses: z.array(z.string()).max(3).describe("Up to 3 alternative diagnoses"),
+  differentialDiagnoses: z.array(z.string()).describe("Up to 3 alternative diagnoses"),
   severity: z.enum(["CRITICAL", "HIGH", "MODERATE", "LOW"]),
-  esiLevel: z.number().int().min(1).max(5).describe("Emergency Severity Index (1=most urgent)"),
-  triageScore: z.number().int().min(1).max(10).describe("Granular triage score 1-10"),
+  esiLevel: z.number().describe("Emergency Severity Index, integer 1-5 (1=most urgent, 5=least urgent)"),
+  triageScore: z.number().describe("Granular triage score, integer 1-10 (1=mild, 10=cardiac arrest)"),
   requiredCapabilities: z.array(z.enum(CAPABILITIES)).describe("Hospital capabilities needed"),
   recommendedFirstAid: z.array(z.string()).describe("Bystander first-aid steps"),
   reasoning: z.string().describe("Brief clinical reasoning, 1-2 sentences"),
-  confidence: z.number().min(0).max(1).describe("Model confidence in assessment"),
-  timeCriticalityMinutes: z.number().int().describe("Minutes until intervention needed"),
+  confidence: z.number().describe("Model confidence in assessment, decimal between 0.0 and 1.0"),
+  timeCriticalityMinutes: z.number().describe("Minutes until intervention needed (integer)"),
   patientDemographics: z.string().describe("Age/gender if discernible, else 'unknown'"),
 });
 

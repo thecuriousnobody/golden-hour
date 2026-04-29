@@ -15,8 +15,9 @@ interface SendResult {
 function normalizePhone(raw: string): string {
   const digits = raw.replace(/[^\d+]/g, "");
   if (digits.startsWith("+")) return digits;
-  // Assume India (+91) if no country code
-  if (digits.length === 10) return `+91${digits}`;
+  // Default country code from env (1 = US, 91 = India). Default US.
+  const cc = process.env.DEFAULT_COUNTRY_CODE ?? "1";
+  if (digits.length === 10) return `+${cc}${digits}`;
   return `+${digits}`;
 }
 
@@ -71,9 +72,18 @@ export const sendWhatsApp = tool({
     body: z.string().describe("WhatsApp message body. Be concise and structured."),
   }),
   execute: async ({ recipientType, recipientName, recipientPhone, body }): Promise<SendResult & { _card: unknown }> => {
-    const to = normalizePhone(recipientPhone);
+    const intendedTo = normalizePhone(recipientPhone);
 
-    const { sid, error } = await twilioSend(to, body);
+    // Demo override: if DEMO_WHATSAPP_OVERRIDE_TO is set, route every dispatch
+    // there so a single tester can see all four messages on one phone (Twilio
+    // sandbox requires each receiving number to have joined separately).
+    const override = process.env.DEMO_WHATSAPP_OVERRIDE_TO?.trim();
+    const to = override ? normalizePhone(override) : intendedTo;
+    const finalBody = override
+      ? `[Demo: → ${recipientType.toUpperCase()} ${recipientName} (${intendedTo})]\n\n${body}`
+      : body;
+
+    const { sid, error } = await twilioSend(to, finalBody);
 
     const result: SendResult =
       sid !== undefined
@@ -99,7 +109,8 @@ export const sendWhatsApp = tool({
         recipientType,
         recipientName,
         to,
-        body,
+        intendedTo: override ? intendedTo : undefined,
+        body: finalBody,
         status: result.sent ? (result.mocked ? "mocked" : "sent") : "failed",
         error: result.error,
         sentAt: new Date().toISOString(),

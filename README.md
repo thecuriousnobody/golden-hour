@@ -23,7 +23,29 @@ A mobile app where users tap one button, speak in any language, and AI handles e
 3. **The Bridge (while waiting)**: AI stays on the line guiding bystanders through CPR or first aid, monitoring symptoms, building a real-time medical record.
 4. **The Handoff**: Arriving responders receive a structured packet. Receiving hospital is already prepped.
 
-## Technology Stack
+## Active build: `web/` (Next.js + Vercel AI SDK)
+
+The current product is in [`web/`](web/README.md). It uses Next.js 16, the
+Vercel AI SDK v6, and Claude Haiku 4.5 as a single tool-calling agent for
+voice → triage → hospital matching → parallel WhatsApp dispatch. The Python
+/ CrewAI scaffold under `src/` is superseded but kept for reference.
+
+```bash
+cd web && npm install
+cp .env.example .env.local   # or use ../.env at the repo root
+npm run dev                  # → http://localhost:4005
+```
+
+End-to-end real integrations as of 2026-04:
+- **Voice**: Web Speech API (English, live transcript) + Sarvam `saaras:v2.5` (Hindi/Tamil/Telugu/Kannada → English)
+- **GPS**: browser geolocation with Peoria, IL fallback
+- **Hospitals**: live Google Places API (New) + region-aware seeds (Bangalore, Peoria) + Jaccard token matching
+- **Dispatch**: real Twilio WhatsApp (with `DEMO_WHATSAPP_OVERRIDE_TO` for single-phone demos)
+- **Triage**: `generateObject` + Zod → ESI level, capabilities, time criticality, first-aid
+
+See [`web/README.md`](web/README.md) for full setup.
+
+## Technology Stack (legacy — Python/CrewAI scaffold)
 
 | Layer | Technology | Purpose |
 |-------|-----------|---------|

@@ -43,13 +43,20 @@ export default function Home() {
   const [geoStatus, setGeoStatus] = useState<"requesting" | "ready">("requesting");
   const [voiceMode, setVoiceMode] = useState<string>("en-US");
 
+  // Caller defaults pull from NEXT_PUBLIC_* env so personal phone numbers
+  // stay out of the public repo. Fall back to a clearly-fake demo number.
+  const demoName = process.env.NEXT_PUBLIC_DEMO_CALLER_NAME ?? "Demo Caller";
+  const demoPhone = process.env.NEXT_PUBLIC_DEMO_CALLER_PHONE ?? "+13095550100";
+  const demoFamilyName = process.env.NEXT_PUBLIC_DEMO_FAMILY_NAME ?? "Spouse";
+  const demoFamilyPhone = process.env.NEXT_PUBLIC_DEMO_FAMILY_PHONE ?? "+13095550199";
+
   const callerRef = useRef<CallerContext>({
     lat: PEORIA_FALLBACK.lat,
     lng: PEORIA_FALLBACK.lng,
     language: "en",
-    name: "Demo Caller",
-    phone: "+13095550100",
-    familyContacts: [{ name: "Spouse", phone: "+13095550199" }],
+    name: demoName,
+    phone: demoPhone,
+    familyContacts: [{ name: demoFamilyName, phone: demoFamilyPhone }],
   });
 
   // Request real GPS on mount

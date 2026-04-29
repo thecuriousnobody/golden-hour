@@ -6,54 +6,87 @@ Golden Hour is an AI-powered emergency response system for India. It aims to sav
 
 The core problem: only 7% of trauma patients in India reach hospitals within the golden hour (vs 50% in the USA). 2.4 million Indians die annually from treatable conditions.
 
-## Interactive Demo (React/Vite)
+## Active Build: `web/` (Next.js + Vercel AI SDK)
 
-A working demo UI is available in `/demo/` for presentations and testing.
+**The current product lives in `web/`.** The earlier Vite `/demo/` and the
+Python/CrewAI backend in `src/` are superseded — kept in the repo for
+reference only. As of 2026-04 we're on Next.js 16 + Vercel AI SDK v6 +
+Claude Haiku 4.5 (same stack as desilo-distillery and swych-box).
 
-### Running the Demo
+### Running the active demo
 ```bash
-cd demo
+cd web
 npm install
-npm run dev
-# Opens at http://localhost:5173/
+cp .env.example .env.local   # fill in keys (or use ../.env at repo root)
+npm run dev                  # → http://localhost:4005
 ```
 
-### Demo Features (February 2026)
-- **Real-time Kannada Speech Recognition** - Google Web Speech API (free, no key needed)
-- **Live Translation to English** - Sarvam AI Translate API
-- **AI-Powered Medical Triage** - Claude API extracts symptoms, infers conditions, severity, and required hospital capabilities from natural language (with keyword fallback)
-- **Session Persistence** - localStorage saves all emergency sessions
-- **Session History** - View past transcriptions with symptoms extracted
+### What's wired up end-to-end (April 2026)
 
-### Demo Environment Variables
+**Voice input — multi-modal:**
+- **English path**: Web Speech API (browser-native, free, live transcript as you speak).
+- **Indian-language path**: Sarvam `speech-to-text-translate` (`saaras:v2.5`) — single endpoint, auto-detects Kannada/Hindi/Tamil/Telugu and returns English.
+- Voice-mode picker in the UI lets you switch between English Web Speech and any Indian language via Sarvam. The `/api/speech` proxy strips codec annotations (`audio/webm;codecs=opus` → `audio/webm`) that Sarvam was rejecting.
+
+**Geolocation:**
+- `requestGeolocation()` (`web/lib/geo.ts`) pulls real browser coords with an 8s timeout.
+- Falls back to Peoria, IL (40.6936, -89.589) — labeled, never silent. `GpsBadge` shows live coords + accuracy meters.
+
+**Hospital matching — real, region-aware:**
+- Live **Google Places API (New)** — `places:searchNearby` with `X-Goog-Api-Key`.
+- Region seeds in `data/hospitals/`: `bangalore.json` and `peoria.json` (5 real Peoria-area hospitals with researched capabilities — OSF Saint Francis Level I trauma + cath_lab + neurosurg, OSF Children's NICU, UnityPoint Methodist cath_lab + stroke, Proctor, Pekin).
+- **Jaccard token similarity** with chain-prefix stopwords (`OSF`, `UnityPoint`, `Carle`, `Apollo`, `Fortis`, `AIIMS`, …) so "OSF Divine Mercy" doesn't inherit cath-lab capabilities just because the name starts with "OSF". Threshold 0.34.
+
+**WhatsApp dispatch — real Twilio:**
+- Twilio sandbox path verified end-to-end (real SIDs delivered).
+- `DEMO_WHATSAPP_OVERRIDE_TO` env routes all four recipients (hospital / ambulance / nurse / family) to a single tester phone with `[Demo: → HOSPITAL Saint Francis (intended-number)]` body prefix — so one phone shows the full fan-out without each recipient having to join the sandbox.
+- `DEFAULT_COUNTRY_CODE` env (was hardcoded `+91`) — set to `1` for US testing.
+- Falls back to mock-mode (logs only) when Twilio creds are absent.
+
+**Triage:**
+- `generateObject` with Claude Haiku 4.5 + Zod schema → ESI level, severity, required capabilities, time criticality, first-aid steps.
+- **Schema gotcha**: don't use `.int()`, `.min()`, `.max()` in Zod schemas passed to `generateObject` with `anthropic()` — Zod v4 emits JSON Schema constraints (including `minimum`/`maximum` from `.int()`'s safe-integer bounds) that Anthropic's structured-output endpoint rejects. Express bounds in `.describe()` text only.
+
+**Validated agentic behavior:**
+- The dispatcher agent runs an **open clarifying-question loop** after first triage (not one-shot). Live-validated 2026-04-28: caller answered follow-ups in Kannada mid-conversation, Sarvam translated each turn, agent kept reasoning in English. Don't refactor into one-shot triage — the multi-turn + per-turn language switch is the demo.
+
+### Active build env vars (`.env` at repo root or `web/.env.local`)
 ```bash
-# demo/.env
-VITE_SARVAM_API_KEY=your_sarvam_api_key  # For Kannada→English translation
-ANTHROPIC_API_KEY=your_anthropic_key      # For AI triage (no VITE_ prefix — server-side only)
+ANTHROPIC_API_KEY=...               # Claude Haiku 4.5 (agent + triage)
+GOOGLE_PLACES_API_KEY=...           # Live nearby-hospital lookups
+SARVAM_API_KEY=...                  # Indian-language STT-translate
+SERPER_API_KEY=...                  # (optional) supplementary web search
+TWILIO_ACCOUNT_SID=...              # WhatsApp sandbox
+TWILIO_AUTH_TOKEN=...
+TWILIO_WHATSAPP_FROM=whatsapp:+14155238886
+DEFAULT_COUNTRY_CODE=1              # 1=US, 91=India — used by phone normalization
+DEMO_WHATSAPP_OVERRIDE_TO=+1...     # Optional: route all dispatches to one phone for demos
 ```
 
-### Demo File Structure
+### Active build file structure
 ```
-demo/
-  vite-api-plugin.ts   # Vite dev server middleware (POST /api/triage → Claude API)
-  src/
-    screens/
-      HomeScreen.tsx       # Main screen with emergency button + history panel
-      ListeningScreen.tsx  # Voice recording + transcription + translation
-      DispatchScreen.tsx   # Dispatch confirmation
-    services/
-      speechApi.ts         # Google Web Speech + Sarvam Translate APIs
-      sessionStorage.ts    # localStorage persistence for sessions
-      triageApi.ts         # AI triage via Claude API (POST /api/triage)
-      sarvamApi.ts         # Sarvam speech-to-text (backup)
-    hooks/
-      useVoiceRecorder.ts  # Microphone capture hook
-    components/
-      EmergencyButton.tsx  # Main SOS button
-      Waveform.tsx         # Audio visualization
+web/
+  app/
+    page.tsx                 # useChat UI, mic button, voice-mode picker, severity-colored cards
+    api/
+      dispatch/route.ts      # streamText agent loop (120s maxDuration)
+      speech/route.ts        # Sarvam STT-translate proxy
+  lib/
+    agents/dispatcher.ts     # System prompt + tool registration
+    tools/
+      triage-patient.ts      # generateObject + Zod → ESI, severity, capabilities
+      find-hospitals.ts      # Google Places + seed fallback + Jaccard matching
+      send-whatsapp.ts       # Twilio + mock fallback + override routing
+      search-web.ts          # Serper (optional)
+    geo.ts                   # requestGeolocation() + Peoria fallback
+    speech.ts                # Web Speech API + MediaRecorder→Sarvam dual-mode
+    hospitals-seed.ts        # Region-aware seed loader (Bangalore + Peoria)
+data/hospitals/
+  bangalore.json             # Indian seed
+  peoria.json                # Peoria seed (5 hospitals, real capabilities)
 ```
 
-### Kannada Demo Phrases (for testing)
+### Kannada test phrases
 ```
 ಸಹಾಯ ಮಾಡಿ! ನನ್ನ ಅಜ್ಜನಿಗೆ ಏನೋ ಆಗಿದೆ!
 (Help! Something has happened to my grandfather!)
@@ -64,6 +97,19 @@ demo/
 ಅವರ ಎಡ ಕೈ ಜೋಮು ಹಿಡಿದಿದೆ, ಉಸಿರಾಡೋಕೆ ಕಷ್ಟ ಆಗ್ತಿದೆ
 (His left arm is numb and he's having trouble breathing)
 ```
+
+### Known gaps
+- **TTS for illiterate callers** — agent replies are text-only. Plan: stream the agent's text deltas through Sarvam TTS (Indian languages) or ElevenLabs/OpenAI TTS (English) and play in-browser. Deferred until after real-Twilio wiring (which is now done).
+- **Speaker diarization** — see "Future Considerations" below.
+
+---
+
+## Legacy: Python/CrewAI backend (`src/`) and Vite demo (`demo/`)
+
+These directories are **superseded** by `web/` but kept for reference. The
+descriptions below document what they were intended to do; nothing in
+`src/` returns more than placeholder responses. New work should target
+`web/` only.
 
 ---
 
