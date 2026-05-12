@@ -81,7 +81,7 @@ export default function Home() {
   }, []);
 
   const [typedInput, setTypedInput] = useState("");
-  const { messages, sendMessage, status, error } = useChat({
+  const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: apiUrl("/api/dispatch"),
       body: () => ({ caller: callerRef.current }),
@@ -92,6 +92,11 @@ export default function Home() {
     if (!text.trim()) return;
     callerRef.current = { ...callerRef.current, language };
     sendMessage({ text });
+    setTypedInput("");
+  };
+
+  const reset = () => {
+    setMessages([]);
     setTypedInput("");
   };
 
@@ -109,7 +114,18 @@ export default function Home() {
           <span className="text-white/30">·</span>
           <span className="text-white/50 truncate">AI emergency dispatcher</span>
         </div>
-        <GpsBadge geo={geo} status={geoStatus} />
+        <div className="flex items-center gap-2">
+          {hasMessages && (
+            <button
+              onClick={reset}
+              className="text-[11px] px-2 py-1 rounded border border-white/15 bg-white/5 hover:bg-white/10 text-white/70 hover:text-white transition"
+              title="Start a new emergency"
+            >
+              New
+            </button>
+          )}
+          <GpsBadge geo={geo} status={geoStatus} />
+        </div>
       </header>
 
       {/* Pipeline strip */}
