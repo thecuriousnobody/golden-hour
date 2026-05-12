@@ -692,7 +692,7 @@ function ToolResultCard({ toolName, output }: { toolName: string; output: unknow
                 ✗ missing: {(c.missing as string[]).join(", ")}
               </div>
             )}
-            {c.phone && <div className="text-xs text-white/50 mt-1">{String(c.phone)}</div>}
+            {Boolean(c.phone) && <div className="text-xs text-white/50 mt-1">{String(c.phone)}</div>}
             <div className="text-[10px] text-white/30 mt-1">via {String(c.source)}</div>
           </div>
         ))}

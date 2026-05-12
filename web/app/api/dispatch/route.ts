@@ -35,9 +35,12 @@ function stripRenderingData(messages: ModelMessage[]): ModelMessage[] {
           out.value !== null &&
           !Array.isArray(out.value)
         ) {
+          // AI SDK v6 types out.value as a recursive JSONValue; cast is safe
+          // because we only remove keys, never introduce non-JSON values.
+          const stripped = stripUnderscoreKeys(out.value as Record<string, unknown>);
           return {
             ...part,
-            output: { ...out, value: stripUnderscoreKeys(out.value as Record<string, unknown>) },
+            output: { ...out, value: stripped as typeof out.value },
           };
         }
 
@@ -57,7 +60,7 @@ function stripRenderingData(messages: ModelMessage[]): ModelMessage[] {
 
         return part;
       }),
-    };
+    } as typeof msg;
   });
 }
 

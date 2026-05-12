@@ -62,7 +62,6 @@ export async function createDispatcherStream(
 
     stopWhen: stepCountIs(10),
     maxRetries: 3,
-    // @ts-expect-error -- timeout is supported by the v6 runtime
     timeout: { totalMs: 90000, stepMs: 25000 },
 
     onStepFinish({ stepNumber, finishReason, usage, toolCalls }) {
