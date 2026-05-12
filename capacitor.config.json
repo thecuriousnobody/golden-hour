@@ -1,0 +1,8 @@
+{
+  "appId": "com.distillerylabs.goldenhour",
+  "appName": "Golden Hour",
+  "webDir": "web/out",
+  "server": {
+    "androidScheme": "https"
+  }
+}
