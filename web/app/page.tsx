@@ -15,6 +15,7 @@ import {
 import { requestGeolocation, PEORIA_FALLBACK, type GeoFix } from "@/lib/geo";
 import { renderMarkdown } from "@/lib/markdown";
 import { apiUrl } from "@/lib/api-base";
+import { isNative } from "@/lib/platform";
 
 const SAMPLE_PROMPTS = [
   "My grandfather is clutching his chest and sweating heavily. He's 72.",
@@ -42,7 +43,12 @@ const VOICE_MODES: { code: string; label: string; engine: "web" | "sarvam" }[] =
 export default function Home() {
   const [geo, setGeo] = useState<GeoFix>(PEORIA_FALLBACK);
   const [geoStatus, setGeoStatus] = useState<"requesting" | "ready">("requesting");
-  const [voiceMode, setVoiceMode] = useState<string>("en-US");
+  // On the Android shell, Web Speech API doesn't exist — default to the
+  // Sarvam auto-detect mode so the very first mic tap works without the
+  // user having to fiddle with the language picker.
+  const [voiceMode, setVoiceMode] = useState<string>(() =>
+    isNative() ? "auto-in" : "en-US"
+  );
 
   // Caller defaults pull from NEXT_PUBLIC_* env so personal phone numbers
   // stay out of the public repo. Fall back to a clearly-fake demo number.
@@ -220,6 +226,10 @@ function HeroPanel({
 }
 
 function getEngine(voiceMode: string): "web" | "sarvam" {
+  // Force MediaRecorder→Sarvam path on the Capacitor Android shell. Web
+  // Speech API is unavailable in Android WebView, so picking "web" there
+  // would fail with "not-allowed" before we even get to the mic.
+  if (isNative()) return "sarvam";
   return VOICE_MODES.find((m) => m.code === voiceMode)?.engine ?? "web";
 }
 

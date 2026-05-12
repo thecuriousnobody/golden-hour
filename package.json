@@ -4,7 +4,7 @@
   "private": true,
   "description": "Capacitor wrapper that packages the web/ Next.js build as an Android app.",
   "scripts": {
-    "build:web": "cd web && CAPACITOR_BUILD=1 NEXT_PUBLIC_API_BASE_URL=https://golden-hour-fawn.vercel.app npm run build",
+    "build:web": "cd web && CAPACITOR_BUILD=1 npm run build",
     "sync": "npm run build:web && npx cap sync android",
     "android": "npm run sync && npx cap open android"
   },
