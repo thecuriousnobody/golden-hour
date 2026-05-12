@@ -14,6 +14,7 @@ import {
 } from "@/lib/speech";
 import { requestGeolocation, PEORIA_FALLBACK, type GeoFix } from "@/lib/geo";
 import { renderMarkdown } from "@/lib/markdown";
+import { apiUrl } from "@/lib/api-base";
 
 const SAMPLE_PROMPTS = [
   "My grandfather is clutching his chest and sweating heavily. He's 72.",
@@ -76,7 +77,7 @@ export default function Home() {
   const [typedInput, setTypedInput] = useState("");
   const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
-      api: "/api/dispatch",
+      api: apiUrl("/api/dispatch"),
       body: () => ({ caller: callerRef.current }),
     }),
   });

@@ -2,8 +2,13 @@ import { createDispatcherStream } from "@/lib/agents/dispatcher";
 import { convertToModelMessages } from "ai";
 import type { UIMessage, ModelMessage } from "ai";
 import type { CallerContext } from "@/lib/types";
+import { corsHeaders, preflightResponse } from "@/lib/cors";
 
 export const maxDuration = 120;
+
+export async function OPTIONS(req: Request) {
+  return preflightResponse(req);
+}
 
 /** Strip _-prefixed keys (rendering payloads) from a JSON object. */
 function stripUnderscoreKeys(obj: Record<string, unknown>): Record<string, unknown> {
@@ -85,12 +90,15 @@ export async function POST(req: Request) {
     const modelMessages = stripRenderingData(await convertToModelMessages(recent));
 
     const result = await createDispatcherStream(modelMessages, fullCaller);
-    return result.toUIMessageStreamResponse();
+    return result.toUIMessageStreamResponse({ headers: corsHeaders(req) });
   } catch (err) {
     console.error("[/api/dispatch] error:", err);
     return new Response(
       JSON.stringify({ error: "Dispatcher unavailable. Try again." }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders(req) },
+      }
     );
   }
 }

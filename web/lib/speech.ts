@@ -10,6 +10,8 @@
  * The page picks mode 1 by default for the Peoria demo (en-US).
  */
 
+import { apiUrl } from "@/lib/api-base";
+
 export const LANGUAGE_NAMES: Record<string, string> = {
   "en-US": "English",
   "en-IN": "English (India)",
@@ -194,7 +196,7 @@ export async function transcribeAndTranslate(audio: Blob): Promise<TranscribeRes
   const form = new FormData();
   form.append("file", audio, "audio.webm");
   try {
-    const res = await fetch("/api/speech", { method: "POST", body: form });
+    const res = await fetch(apiUrl("/api/speech"), { method: "POST", body: form });
     const data = await res.json();
     if (!res.ok) {
       return {

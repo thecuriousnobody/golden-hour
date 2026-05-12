@@ -7,7 +7,13 @@
  * Returns: { transcript, detectedLanguage, englishText }
  */
 
+import { corsHeaders, preflightResponse } from "@/lib/cors";
+
 export const maxDuration = 60;
+
+export async function OPTIONS(req: Request) {
+  return preflightResponse(req);
+}
 
 function mimeToExt(mime: string): string {
   if (mime.includes("webm")) return "webm";
@@ -19,23 +25,27 @@ function mimeToExt(mime: string): string {
 }
 
 export async function POST(req: Request) {
+  const cors = corsHeaders(req);
   const apiKey = process.env.SARVAM_API_KEY;
 
   const form = await req.formData();
   const file = form.get("file");
 
   if (!file || !(file instanceof Blob)) {
-    return Response.json({ error: "Missing audio file" }, { status: 400 });
+    return Response.json({ error: "Missing audio file" }, { status: 400, headers: cors });
   }
 
   if (!apiKey) {
-    return Response.json({
-      transcript: "",
-      detectedLanguage: "unknown",
-      englishText: "",
-      passthrough: true,
-      warning: "SARVAM_API_KEY not set — cannot auto-detect. Type instead.",
-    });
+    return Response.json(
+      {
+        transcript: "",
+        detectedLanguage: "unknown",
+        englishText: "",
+        passthrough: true,
+        warning: "SARVAM_API_KEY not set — cannot auto-detect. Type instead.",
+      },
+      { headers: cors }
+    );
   }
 
   // Sarvam speech-to-text-translate auto-detects source language
@@ -65,7 +75,7 @@ export async function POST(req: Request) {
       const errText = await res.text();
       return Response.json(
         { error: `Sarvam STT HTTP ${res.status}: ${errText}` },
-        { status: 502 }
+        { status: 502, headers: cors }
       );
     }
 
@@ -75,15 +85,18 @@ export async function POST(req: Request) {
       diarized_transcript?: unknown;
     };
 
-    return Response.json({
-      transcript: data.transcript ?? "",
-      englishText: data.transcript ?? "",
-      detectedLanguage: data.language_code ?? "unknown",
-    });
+    return Response.json(
+      {
+        transcript: data.transcript ?? "",
+        englishText: data.transcript ?? "",
+        detectedLanguage: data.language_code ?? "unknown",
+      },
+      { headers: cors }
+    );
   } catch (err) {
     return Response.json(
       { error: (err as Error).message },
-      { status: 500 }
+      { status: 500, headers: cors }
     );
   }
 }
