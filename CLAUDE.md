@@ -6,14 +6,22 @@ Golden Hour is an AI-powered emergency response system for India. It aims to sav
 
 The core problem: only 7% of trauma patients in India reach hospitals within the golden hour (vs 50% in the USA). 2.4 million Indians die annually from treatable conditions.
 
-## Active Build: `web/` (Next.js + Vercel AI SDK)
+## Active Builds
 
-**The current product lives in `web/`.** The earlier Vite `/demo/` and the
-Python/CrewAI backend in `src/` are superseded — kept in the repo for
-reference only. As of 2026-04 we're on Next.js 16 + Vercel AI SDK v6 +
-Claude Haiku 4.5 (same stack as desilo-distillery and swych-box).
+The product now has **two living surfaces**, both pointed at the same Vercel
+backend:
 
-### Running the active demo
+1. **`web/`** — Next.js 16 + Vercel AI SDK v6 + Claude Haiku 4.5. This is the
+   brain and the source of truth for UI/logic. Deployed to
+   https://golden-hour-fawn.vercel.app (Vercel team: `the-idea-sandbox`).
+2. **`android/` + repo-root Capacitor wrapper** — As of 2026-05-12, a
+   Capacitor v7 shell that static-exports `web/` and packages it as an
+   installable Android APK. Phone is dumb, all intelligence is on Vercel.
+
+The earlier Vite `/demo/` and the Python/CrewAI backend in `src/` are
+**superseded** — kept in the repo for reference only.
+
+### Running the web build (dev)
 ```bash
 cd web
 npm install
@@ -21,7 +29,66 @@ cp .env.example .env.local   # fill in keys (or use ../.env at repo root)
 npm run dev                  # → http://localhost:4005
 ```
 
-### What's wired up end-to-end (April 2026)
+### Running the Android build
+```bash
+# At repo root:
+npm install                  # one-time, installs Capacitor + plugins
+npm run sync                 # static-export web/ + cap sync android
+npm run android              # static-export + sync + open Android Studio
+# In Android Studio: plug phone in (USB Debugging on), click ▶ Run.
+```
+
+The repo-root `package.json` is the Capacitor wrapper (NOT the same as
+`web/package.json`). Build pipeline:
+1. `CAPACITOR_BUILD=1` triggers Next.js `output: "export"` (gated in
+   `web/next.config.ts`).
+2. Static files land in `web/out/`.
+3. `npx cap sync android` copies them to `android/app/src/main/assets/public/`.
+4. Android Studio compiles + pushes the APK to the connected phone.
+
+**Important version pin:** Capacitor is on **v7**, not v8. Capacitor 8
+needs Node ≥22; this repo's dev machine is Node 20.16. `npm install
+@capacitor/*@^7` when adding plugins. If Node gets upgraded to 22+, the
+pin can come off.
+
+### Capacitor app identity
+- `appId`: `com.distillerylabs.goldenhour`
+- `appName`: "Golden Hour"
+- `webDir`: `web/out`
+- `server.androidScheme`: `https` (in-WebView origin = `https://localhost`,
+  needed for the CORS allowlist).
+- Custom amber-sunset launcher icon (regenerable via `scripts/gen-icon.py`,
+  source PNG at `docs/icon-source-1024.png`).
+
+### What's wired up end-to-end (May 2026)
+
+**Android shell (Capacitor, v0 — installed on Rajeev's phone 2026-05-12):**
+- `android/` is a Capacitor v7 native project. `MainActivity.java`
+  requests `RECORD_AUDIO` + `ACCESS_FINE_LOCATION` at runtime on first
+  launch, and installs a permissive `BridgeWebChromeClient` so WebView
+  `getUserMedia` gets the Android-level grants forwarded to it (without
+  this bridge the WebView denies the mic silently even after the Android
+  prompt is accepted).
+- `web/lib/platform.ts` exposes `isNative()` (backed by
+  `Capacitor.isNativePlatform()`). The page uses this to:
+  - Force `getEngine()` to `"sarvam"` on native (Web Speech API doesn't
+    exist in Android WebView).
+  - Default the voice mode to `"auto-in"` (Sarvam auto-detect).
+- `web/lib/api-base.ts` `apiUrl()` resolves relative paths against
+  `https://golden-hour-fawn.vercel.app` when native — **runtime detection,
+  not build-time `NEXT_PUBLIC_API_BASE_URL` inlining** (Turbopack's
+  inlining was unreliable with the symlinked `.env.local`).
+- `web/lib/cors.ts` allowlist includes `capacitor://localhost`,
+  `https://localhost`, `http://localhost`, `http://localhost:4005`.
+  Both `/api/dispatch` and `/api/speech` serve OPTIONS preflight + stamp
+  responses with the matched origin.
+- `web/lib/geo.ts` delegates to `@capacitor/geolocation` so the same code
+  uses the native location API on Android and `navigator.geolocation` on
+  browser via Capacitor's web shim.
+- UI affordances added for the Android demo flow:
+  - "New" button (header top-right) clears the chat via
+    `useChat`'s `setMessages([])` so demo users can reset between
+    languages/scenarios without killing the app.
 
 **Voice input — multi-modal:**
 - **English path**: Web Speech API (browser-native, free, live transcript as you speak).
@@ -65,12 +132,24 @@ DEMO_WHATSAPP_OVERRIDE_TO=+1...     # Optional: route all dispatches to one phon
 
 ### Active build file structure
 ```
+# Capacitor wrapper (repo root)
+package.json                 # build:web / sync / android scripts (Capacitor)
+capacitor.config.json        # appId, webDir, androidScheme
+android/                     # Capacitor-generated native project
+  app/src/main/
+    AndroidManifest.xml      # RECORD_AUDIO, ACCESS_FINE_LOCATION
+    java/com/distillerylabs/goldenhour/MainActivity.java
+                             # Runtime permission requests +
+                             # permissive BridgeWebChromeClient
+
+# Static web app — source of truth for UI + logic
 web/
   app/
-    page.tsx                 # useChat UI, mic button, voice-mode picker, severity-colored cards
+    page.tsx                 # useChat UI, mic button, voice-mode picker,
+                             # severity-colored cards, "New" reset button
     api/
-      dispatch/route.ts      # streamText agent loop (120s maxDuration)
-      speech/route.ts        # Sarvam STT-translate proxy
+      dispatch/route.ts      # streamText agent loop (120s maxDuration) + CORS
+      speech/route.ts        # Sarvam STT-translate proxy + CORS
   lib/
     agents/dispatcher.ts     # System prompt + tool registration
     tools/
@@ -78,12 +157,22 @@ web/
       find-hospitals.ts      # Google Places + seed fallback + Jaccard matching
       send-whatsapp.ts       # Twilio + mock fallback + override routing
       search-web.ts          # Serper (optional)
-    geo.ts                   # requestGeolocation() + Peoria fallback
+    api-base.ts              # apiUrl() — runtime native detection → Vercel URL
+    cors.ts                  # CORS allowlist + preflight helper
+    platform.ts              # isNative() — Capacitor.isNativePlatform() wrapper
+    geo.ts                   # @capacitor/geolocation + Peoria fallback
     speech.ts                # Web Speech API + MediaRecorder→Sarvam dual-mode
     hospitals-seed.ts        # Region-aware seed loader (Bangalore + Peoria)
 data/hospitals/
   bangalore.json             # Indian seed
   peoria.json                # Peoria seed (5 hospitals, real capabilities)
+
+# Reproducible app-icon generation
+scripts/gen-icon.py          # Renders Android icon set from a single source
+docs/icon-source-1024.png    # 1024×1024 source (amber gradient + white cross)
+docs/grill/                  # Design brief + plan from the 2026-05-02 grill-me
+  grill-2026-05-02-golden-hour-android-v0.md
+  plan-2026-05-02-android-v0-capacitor.md
 ```
 
 ### Kannada test phrases
@@ -99,7 +188,13 @@ data/hospitals/
 ```
 
 ### Known gaps
-- **TTS for illiterate callers** — agent replies are text-only. Plan: stream the agent's text deltas through Sarvam TTS (Indian languages) or ElevenLabs/OpenAI TTS (English) and play in-browser. Deferred until after real-Twilio wiring (which is now done).
+- **TTS for illiterate callers** — agent replies are text-only. Plan: stream the agent's text deltas through Sarvam TTS (Indian languages) or ElevenLabs/OpenAI TTS (English) and play in-browser. Deferred until after real-Twilio wiring (now done).
+- **Android v0 → v1 polish remaining** (from `docs/grill/plan-2026-05-02-android-v0-capacitor.md`):
+  - Day 3 — first-launch onboarding screen + `@capacitor/preferences`-backed identity (name/phone/family contacts persisted on-device instead of `NEXT_PUBLIC_DEMO_*` env defaults).
+  - Day 4 — native toast for errors instead of inline "tap for details", persistent legal disclaimer ("AI-assisted triage — not a medical diagnosis").
+  - Day 5 — Keshav's phone install, signed debug APK, QR-code distribution for side-load.
+- **Background/lock-screen guidance** — closing the Android app stops the agent stream. Real emergency use needs a foreground service so CPR coaching keeps streaming even when the screen is locked.
+- **Twilio out of sandbox** — recipients still need to join the Twilio WhatsApp sandbox first; production Twilio number unblocks "any phone" delivery.
 - **Speaker diarization** — see "Future Considerations" below.
 
 ---
