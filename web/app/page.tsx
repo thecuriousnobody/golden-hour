@@ -703,22 +703,42 @@ function ToolResultCard({ toolName, output }: { toolName: string; output: unknow
   if (toolName.includes("sendWhatsApp") && o._card) {
     const c = o._card as Record<string, unknown>;
     const sent = c.status === "sent" || c.status === "mocked";
+    const recipientType = String(c.recipientType);
+
+    // Color the left bar by recipient so all 4 dispatches are
+    // distinguishable at a glance (hospital=red, ambulance=amber,
+    // nurse=sky, family=violet, other=slate).
+    const recipientStyles: Record<string, { bar: string; chip: string; icon: string }> = {
+      hospital:  { bar: "bg-red-500",    chip: "bg-red-500/20 text-red-300",       icon: "🏥" },
+      ambulance: { bar: "bg-amber-500",  chip: "bg-amber-500/20 text-amber-300",   icon: "🚑" },
+      nurse:     { bar: "bg-sky-500",    chip: "bg-sky-500/20 text-sky-300",       icon: "🩺" },
+      family:    { bar: "bg-violet-500", chip: "bg-violet-500/20 text-violet-300", icon: "👪" },
+      other:     { bar: "bg-slate-400",  chip: "bg-slate-500/20 text-slate-300",   icon: "📨" },
+    };
+    const style = recipientStyles[recipientType] ?? recipientStyles.other;
+
     return (
       <div
-        className={`mt-3 rounded-xl border p-3 text-sm ${
-          sent
-            ? "border-emerald-500/30 bg-emerald-500/10"
-            : "border-red-500/30 bg-red-500/10"
+        className={`mt-3 flex overflow-hidden rounded-xl border ${
+          sent ? "border-emerald-500/30 bg-emerald-500/10" : "border-red-500/30 bg-red-500/10"
         }`}
       >
-        <div className="flex justify-between items-start mb-1">
-          <div className="font-semibold capitalize">
-            {String(c.recipientType)} · {String(c.recipientName)}
+        {/* Left color bar — recipient-type at a glance */}
+        <div className={`w-1.5 shrink-0 ${style.bar}`} aria-hidden />
+
+        <div className="flex-1 p-3 text-sm">
+          <div className="flex justify-between items-start mb-1">
+            <div className="font-semibold flex items-center gap-2">
+              <span className={`text-xs px-2 py-0.5 rounded-full ${style.chip}`}>
+                {style.icon} {recipientType}
+              </span>
+              <span className="text-white/80">{String(c.recipientName)}</span>
+            </div>
+            <div className="text-xs uppercase tracking-wide">{String(c.status)}</div>
           </div>
-          <div className="text-xs uppercase tracking-wide">{String(c.status)}</div>
+          <div className="text-xs text-white/60 whitespace-pre-wrap">{String(c.body)}</div>
+          <div className="text-[10px] text-white/40 mt-1">{String(c.to)}</div>
         </div>
-        <div className="text-xs text-white/60 whitespace-pre-wrap">{String(c.body)}</div>
-        <div className="text-[10px] text-white/40 mt-1">{String(c.to)}</div>
       </div>
     );
   }
