@@ -32,7 +32,10 @@ import { renderMarkdown } from "@/lib/markdown";
 import { apiUrl } from "@/lib/api-base";
 import { isNative } from "@/lib/platform";
 import { speak, stopSpeaking } from "@/lib/tts";
+import { translateForDisplay } from "@/lib/translate";
 import { Waveform } from "@/components/Waveform";
+import { FailsafeCard } from "@/components/FailsafeCard";
+import { emergencyNumberFor } from "@/lib/failsafe-content";
 
 const SAMPLE_PROMPTS = [
   "My grandfather is clutching his chest and sweating heavily. He's 72.",
@@ -113,6 +116,36 @@ export default function Home() {
   // Track which assistant message IDs we've already spoken so React
   // re-renders don't replay them.
   const spokenIds = useRef<Set<string>>(new Set());
+  // Per-message translations of assistant replies. Keyed by message ID.
+  // Populated on assistant message completion when the last user voice
+  // turn was in a non-English language. Lets MessageBubble render a
+  // toggle pill (EN ⇄ ಕನ್ನಡ) so a nearby reader can follow the steps
+  // without having to catch every word of TTS audio.
+  const [translations, setTranslations] = useState<
+    Map<string, { lang: string; text: string }>
+  >(() => new Map());
+  // Track which assistant IDs we've already submitted for translation so
+  // re-renders don't refetch.
+  const translatedIds = useRef<Set<string>>(new Set());
+  // navigator.onLine — drives the failsafe "Offline" banner + card.
+  const [online, setOnline] = useState(true);
+  // Country code from build env; used to pick 911 vs 108 in the failsafe.
+  const countryCode = process.env.NEXT_PUBLIC_EMERGENCY_COUNTRY_CODE ?? "1";
+
+  // Watch network status. The OS's offline event is more reliable than any
+  // fetch-based health check (and works even when our API is up but Wi-Fi
+  // is dead).
+  useEffect(() => {
+    if (typeof navigator === "undefined") return;
+    const update = () => setOnline(navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
 
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
@@ -165,6 +198,55 @@ export default function Home() {
     }
   }, [speakerOn]);
 
+  // Translate each assistant message into the caller's detected language for
+  // on-screen display. Independent of TTS — runs even when the speaker is
+  // muted, because the whole point is a literate bystander reading the
+  // screen when the patient/caller can't process English audio fast enough.
+  useEffect(() => {
+    if (status === "streaming" || status === "submitted") return;
+    // Find the last assistant message + the most recent user voice turn.
+    let lastAssistant: typeof messages[number] | undefined;
+    let lastUser: typeof messages[number] | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!lastAssistant && m.role === "assistant") lastAssistant = m;
+      if (!lastUser && m.role === "user") lastUser = m;
+      if (lastAssistant && lastUser) break;
+    }
+    if (!lastAssistant) return;
+    if (translatedIds.current.has(lastAssistant.id)) return;
+
+    const text = (lastAssistant.parts ?? [])
+      .filter((p) => p.type === "text" && typeof (p as { text?: string }).text === "string")
+      .map((p) => (p as { text: string }).text)
+      .join(" ")
+      .trim();
+    if (!text) return;
+
+    const userText = (lastUser?.parts ?? []).find(
+      (p) => p.type === "text" && typeof (p as { text?: string }).text === "string"
+    ) as { text?: string } | undefined;
+    const meta = userText?.text ? voiceMetaMap.get(userText.text) : undefined;
+    const lang = meta?.lang;
+    // No detected non-English language → nothing to translate.
+    if (!lang) return;
+    const base = lang.toLowerCase().split("-")[0];
+    if (base === "en" || base === "") return;
+
+    translatedIds.current.add(lastAssistant.id);
+    translateForDisplay(text, lang).then((result) => {
+      if (!result.translatedText || result.translatedText === text) return;
+      setTranslations((prev) => {
+        const next = new Map(prev);
+        next.set(lastAssistant!.id, {
+          lang: result.lang,
+          text: result.translatedText,
+        });
+        return next;
+      });
+    });
+  }, [messages, status, voiceMetaMap]);
+
   const submit = (text: string, language: string = "en", voiceMeta?: VoiceMeta) => {
     if (!text.trim()) return;
     callerRef.current = { ...callerRef.current, language };
@@ -182,9 +264,11 @@ export default function Home() {
   const reset = () => {
     stopSpeaking();
     spokenIds.current = new Set();
+    translatedIds.current = new Set();
     setMessages([]);
     setTypedInput("");
     setVoiceMetaMap(new Map());
+    setTranslations(new Map());
   };
 
   const hasMessages = messages.length > 0;
@@ -202,6 +286,15 @@ export default function Home() {
           <span className="text-white/50 truncate">AI emergency dispatcher</span>
         </div>
         <div className="flex items-center gap-2">
+          {/* Always-on emergency dial. Works regardless of network or AI
+              state — the OS dialer takes over the moment it's tapped. */}
+          <a
+            href={emergencyNumberFor(countryCode).tel}
+            className="text-[11px] px-2 py-1 rounded bg-red-600 hover:bg-red-500 text-white font-bold transition shadow-sm shadow-red-900/30"
+            title={`Dial ${emergencyNumberFor(countryCode).display} now`}
+          >
+            📞 {emergencyNumberFor(countryCode).display}
+          </a>
           <button
             onClick={() => setSpeakerOn((v) => !v)}
             className={`text-[11px] px-2 py-1 rounded border transition ${
@@ -227,6 +320,16 @@ export default function Home() {
         </div>
       </header>
 
+      {/* Offline banner — sits above pipeline so a literate bystander
+          knows why the agent went quiet. */}
+      {!online && (
+        <div className="mt-2 text-[11px] rounded-md px-3 py-1.5 bg-amber-500/15 border border-amber-500/30 text-amber-200 flex items-center gap-2">
+          <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          You&apos;re offline — built-in guidance below. Tap 📞 above to
+          call now.
+        </div>
+      )}
+
       {/* Pipeline strip */}
       <div className="mt-4">
         <PipelineStages messages={messages} status={status} />
@@ -250,7 +353,19 @@ export default function Home() {
 
       {/* Hero or conversation */}
       {!hasMessages ? (
-        <HeroPanel onSubmit={submit} voiceMode={voiceMode} />
+        <>
+          <HeroPanel onSubmit={submit} voiceMode={voiceMode} />
+          {/* If we boot up offline, surface the failsafe right on the
+              landing screen — the user shouldn't have to tap mic first
+              just to learn the app can't reach Vercel. */}
+          {!online && (
+            <FailsafeCard
+              countryCode={countryCode}
+              familyContact={callerRef.current.familyContacts?.[0]}
+              reason="offline"
+            />
+          )}
+        </>
       ) : (
         <section className="flex-1 flex flex-col gap-4 mt-4">
           {messages.map((m) => (
@@ -258,6 +373,7 @@ export default function Home() {
               key={m.id}
               message={m as MessageShape}
               voiceMetaMap={voiceMetaMap}
+              translations={translations}
             />
           ))}
           {status === "streaming" && (
@@ -276,7 +392,23 @@ export default function Home() {
               Dispatcher speaking — please listen
             </div>
           )}
-          {error && <div className="text-sm text-red-400">Error: {error.message}</div>}
+          {/* Failsafe: render the offline panel whenever the agent fails
+              or the device drops off the network mid-conversation. The
+              caller is still in an emergency — we can't just show a red
+              error toast. */}
+          {(error || !online) && (
+            <FailsafeCard
+              countryCode={countryCode}
+              familyContact={callerRef.current.familyContacts?.[0]}
+              reason={!online ? "offline" : "agent_error"}
+            />
+          )}
+          {error && (
+            <details className="text-[10px] text-red-300/60 mt-1">
+              <summary className="cursor-pointer">Technical detail</summary>
+              <div className="mt-1 break-all">{error.message}</div>
+            </details>
+          )}
         </section>
       )}
 
@@ -894,9 +1026,11 @@ function BottomBar({
 function MessageBubble({
   message,
   voiceMetaMap,
+  translations,
 }: {
   message: MessageShape;
   voiceMetaMap?: Map<string, VoiceMeta>;
+  translations?: Map<string, { lang: string; text: string }>;
 }) {
   const isUser = message.role === "user";
 
@@ -913,6 +1047,14 @@ function MessageBubble({
     !!voiceMeta &&
     voiceMeta.original.trim().length > 0 &&
     voiceMeta.original.trim() !== userText?.trim();
+
+  // Bilingual rendering — only relevant on assistant messages, and only
+  // when we have a translation cached for this message ID. The toggle
+  // defaults to the caller's language (the bystander who reads it is the
+  // one most likely to be in distress); they can flip to EN to hand the
+  // phone to an English-literate helper.
+  const translation = !isUser ? translations?.get(message.id) : undefined;
+  const [showTranslation, setShowTranslation] = useState(true);
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
@@ -937,11 +1079,47 @@ function MessageBubble({
             <div className="mt-1 h-px bg-white/10" />
           </div>
         )}
+        {/* Bilingual toggle — only on assistant messages that have a
+            cached non-English translation. A bystander who reads Kannada
+            but not English can flip this and follow along. */}
+        {translation && (
+          <div className="mb-2 flex items-center gap-1.5 text-[10px]">
+            <span className="text-white/40 uppercase tracking-wide">Read in:</span>
+            <button
+              type="button"
+              onClick={() => setShowTranslation(true)}
+              className={`px-2 py-0.5 rounded-full transition ${
+                showTranslation
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  : "border border-white/10 text-white/50 hover:text-white"
+              }`}
+            >
+              {languageName(translation.lang)}
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowTranslation(false)}
+              className={`px-2 py-0.5 rounded-full transition ${
+                !showTranslation
+                  ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+                  : "border border-white/10 text-white/50 hover:text-white"
+              }`}
+            >
+              English
+            </button>
+          </div>
+        )}
         {(message.parts ?? []).map((part, i) => {
           if (part.type === "text" && part.text) {
+            // For assistant messages with a translation, swap the text
+            // body when the toggle says so. Tool cards still render in
+            // English — they're structured data, not prose, and a
+            // mid-translation hospital list is more confusing than helpful.
+            const displayText =
+              translation && showTranslation ? translation.text : part.text;
             return (
               <div key={i} className="text-sm whitespace-pre-wrap leading-relaxed">
-                {renderMarkdown(part.text)}
+                {renderMarkdown(displayText)}
               </div>
             );
           }
