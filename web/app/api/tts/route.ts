@@ -76,6 +76,37 @@ function normalizeLang(lang: string): string {
   return map[base] ?? "en-IN";
 }
 
+async function translateToTarget(
+  apiKey: string,
+  text: string,
+  target_language_code: string
+): Promise<string> {
+  // English target — no translation needed; just return as-is.
+  if (target_language_code === "en-IN" || target_language_code === "en-US") {
+    return text;
+  }
+  try {
+    const res = await fetch("https://api.sarvam.ai/translate", {
+      method: "POST",
+      headers: {
+        "api-subscription-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        input: text,
+        source_language_code: "en-IN",
+        target_language_code,
+        mode: "formal",
+      }),
+    });
+    if (!res.ok) return text; // Best-effort fallback: speak the English.
+    const data = (await res.json()) as { translated_text?: string };
+    return (data.translated_text ?? "").trim() || text;
+  } catch {
+    return text;
+  }
+}
+
 export async function POST(req: Request) {
   const cors = corsHeaders(req);
   const apiKey = process.env.SARVAM_API_KEY;
@@ -102,7 +133,12 @@ export async function POST(req: Request) {
   }
 
   const target_language_code = normalizeLang(lang);
-  const inputs = chunkText(text);
+
+  // Agent always replies in English. Sarvam TTS does NOT translate — it
+  // expects text in the target script/language. So we translate first,
+  // then synthesize.
+  const localizedText = await translateToTarget(apiKey, text, target_language_code);
+  const inputs = chunkText(localizedText);
 
   try {
     const res = await fetch("https://api.sarvam.ai/text-to-speech", {
