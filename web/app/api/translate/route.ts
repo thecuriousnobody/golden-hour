@@ -91,6 +91,143 @@ interface TranslateRequest {
   lang?: string;
   sourceLanguage?: string;
   targetLanguage?: string;
+  /**
+   * When true, preserve block-level markdown structure (headings, list
+   * items, blockquotes) by translating line-by-line instead of as a single
+   * paragraph. Sarvam's translate doesn't preserve markdown syntax — it
+   * returns a flat paragraph — so a bilingual UI loses headings + lists
+   * unless we peel each line's marker, translate the prose, then reattach.
+   */
+  preserveMarkdown?: boolean;
+}
+
+/**
+ * Split a markdown line into its leading block-level marker (heading hash,
+ * list bullet, ordered-list number, blockquote) and the remaining content.
+ * The marker is kept verbatim — it doesn't get translated.
+ */
+function splitMarker(line: string): { prefix: string; content: string } {
+  // Match leading whitespace + optional marker. Headings: #..######,
+  // list bullets: - * +, ordered: \d+. or \d+), blockquote: >.
+  const m = line.match(
+    /^(\s*(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+))(.*)$/
+  );
+  if (m) return { prefix: m[1], content: m[2] };
+  return { prefix: "", content: line };
+}
+
+/**
+ * Strip inline markdown emphasis before translation. We don't try to
+ * re-impose **bold** etc. on the translated output — word boundaries
+ * change across languages and we'd guess wrong as often as right. The
+ * content reads correctly without it; block-level structure is what
+ * carries the scannability of a triage list.
+ */
+function stripInlineEmphasis(s: string): string {
+  return s
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/\*([^*]+)\*/g, "$1")
+    .replace(/_([^_]+)_/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+}
+
+/**
+ * Translate a single chunk via Sarvam. Returns the source on failure so the
+ * caller can fall back gracefully.
+ */
+async function translateOne(
+  apiKey: string,
+  text: string,
+  sourceLanguage: string,
+  targetLanguage: string
+): Promise<{ text: string; ok: boolean; reason?: string }> {
+  if (!text.trim()) return { text, ok: true };
+  try {
+    const res = await fetch("https://api.sarvam.ai/translate", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "api-subscription-key": apiKey,
+      },
+      body: JSON.stringify({
+        input: text,
+        source_language_code: sourceLanguage,
+        target_language_code: targetLanguage,
+        mode: "formal",
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { text, ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 160)}` };
+    }
+    const data = (await res.json()) as { translated_text?: string };
+    const t = (data.translated_text ?? "").trim();
+    return { text: t || text, ok: !!t };
+  } catch (err) {
+    return { text, ok: false, reason: (err as Error).message };
+  }
+}
+
+/**
+ * Markdown-aware translation. Processes the input line by line, preserving
+ * block-level markers, with a small concurrency cap so a 15-line triage
+ * card doesn't fan out to 15 simultaneous Sarvam calls.
+ */
+async function translateMarkdownStructured(
+  apiKey: string,
+  text: string,
+  sourceLanguage: string,
+  targetLanguage: string
+): Promise<{ text: string; issues: string[] }> {
+  const lines = text.split("\n");
+  const issues: string[] = [];
+
+  // Build the work list — index + content to translate. Blank lines and
+  // marker-only lines pass through untouched.
+  type Work = { index: number; prefix: string; content: string };
+  const work: Work[] = [];
+  const output: string[] = new Array(lines.length).fill("");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (!line.trim()) {
+      output[i] = line;
+      continue;
+    }
+    const { prefix, content } = splitMarker(line);
+    const stripped = stripInlineEmphasis(content);
+    if (!stripped.trim()) {
+      output[i] = line;
+      continue;
+    }
+    work.push({ index: i, prefix, content: stripped });
+  }
+
+  // Simple concurrency-capped worker pool. Sarvam's rate limits are quiet
+  // but unfanned 15 simultaneous POSTs is rude.
+  const CONCURRENCY = 4;
+  let cursor = 0;
+  async function worker() {
+    while (cursor < work.length) {
+      const my = work[cursor++];
+      if (!my) return;
+      const { text: translated, ok, reason } = await translateOne(
+        apiKey,
+        my.content,
+        sourceLanguage,
+        targetLanguage
+      );
+      if (!ok) {
+        issues.push(`line#${my.index}: ${reason}`);
+      }
+      output[my.index] = my.prefix + translated;
+    }
+  }
+  await Promise.all(Array.from({ length: CONCURRENCY }, worker));
+
+  return { text: output.join("\n"), issues };
 }
 
 export async function POST(req: Request) {
@@ -135,6 +272,33 @@ export async function POST(req: Request) {
         lang: targetLanguage,
         passthrough: true,
         warning: "SARVAM_API_KEY not configured — passing text through",
+      },
+      { headers: cors }
+    );
+  }
+
+  // Markdown-aware path — line-by-line, preserves headings + lists. Used
+  // by the bilingual on-screen toggle so the Kannada/Hindi rendering keeps
+  // the same scannable structure as the English source.
+  if (body.preserveMarkdown) {
+    const { text: translatedText, issues } = await translateMarkdownStructured(
+      apiKey,
+      text,
+      sourceLanguage,
+      targetLanguage
+    );
+    console.log(`[translate] ok (markdown)`, {
+      source: sourceLanguage,
+      target: targetLanguage,
+      lines: text.split("\n").length,
+      issues: issues.length,
+    });
+    return Response.json(
+      {
+        translatedText,
+        lang: targetLanguage,
+        sourceLanguage,
+        ...(issues.length ? { warnings: issues } : {}),
       },
       { headers: cors }
     );

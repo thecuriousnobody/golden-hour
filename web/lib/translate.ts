@@ -39,7 +39,10 @@ export async function translateForDisplay(
     const res = await fetch(apiUrl("/api/translate"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ text: trimmed, lang }),
+      // preserveMarkdown:true tells the server to translate line-by-line
+      // so headings + list bullets survive — Sarvam's translate otherwise
+      // flattens **bold** / ### headings / 1. lists into a single paragraph.
+      body: JSON.stringify({ text: trimmed, lang, preserveMarkdown: true }),
     });
     const data = (await res.json()) as TranslateResult;
     if (!res.ok) {
