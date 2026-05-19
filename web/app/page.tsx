@@ -12,6 +12,21 @@ import {
   transcribeAndTranslate,
   languageName,
 } from "@/lib/speech";
+
+/**
+ * Per-message metadata captured from voice input. The English `text` of the
+ * user's message is also the key into the metadata map so we can look it up
+ * inside MessageBubble without threading IDs through useChat.
+ *
+ * - `lang` is the detected language code (e.g. "kn-IN", "hi", "en").
+ * - `original` is what Sarvam returned BEFORE translation. For native scripts
+ *   (Kannada, Hindi, etc.) this is rendered above the English text so the
+ *   audience sees the multilingual moment instead of just the English result.
+ */
+interface VoiceMeta {
+  lang: string;
+  original: string;
+}
 import { requestGeolocation, PEORIA_FALLBACK, type GeoFix } from "@/lib/geo";
 import { renderMarkdown } from "@/lib/markdown";
 import { apiUrl } from "@/lib/api-base";
@@ -81,6 +96,13 @@ export default function Home() {
   }, []);
 
   const [typedInput, setTypedInput] = useState("");
+  // Map<englishText, VoiceMeta> — populated by submit() whenever a voice
+  // input lands, consumed by MessageBubble to show the detected-language
+  // badge and (for non-Latin scripts) the original text.
+  const [voiceMetaMap, setVoiceMetaMap] = useState<Map<string, VoiceMeta>>(
+    () => new Map()
+  );
+
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
       api: apiUrl("/api/dispatch"),
@@ -88,9 +110,16 @@ export default function Home() {
     }),
   });
 
-  const submit = (text: string, language: string = "en") => {
+  const submit = (text: string, language: string = "en", voiceMeta?: VoiceMeta) => {
     if (!text.trim()) return;
     callerRef.current = { ...callerRef.current, language };
+    if (voiceMeta) {
+      setVoiceMetaMap((m) => {
+        const next = new Map(m);
+        next.set(text, voiceMeta);
+        return next;
+      });
+    }
     sendMessage({ text });
     setTypedInput("");
   };
@@ -98,6 +127,7 @@ export default function Home() {
   const reset = () => {
     setMessages([]);
     setTypedInput("");
+    setVoiceMetaMap(new Map());
   };
 
   const hasMessages = messages.length > 0;
@@ -155,7 +185,11 @@ export default function Home() {
       ) : (
         <section className="flex-1 flex flex-col gap-4 mt-4">
           {messages.map((m) => (
-            <MessageBubble key={m.id} message={m as MessageShape} />
+            <MessageBubble
+              key={m.id}
+              message={m as MessageShape}
+              voiceMetaMap={voiceMetaMap}
+            />
           ))}
           {status === "streaming" && (
             <div className="text-sm text-white/40">Dispatcher thinking…</div>
@@ -216,7 +250,7 @@ function HeroPanel({
   onSubmit,
   voiceMode,
 }: {
-  onSubmit: (text: string, language: string) => void;
+  onSubmit: (text: string, language: string, voiceMeta?: VoiceMeta) => void;
   voiceMode: string;
 }) {
   return (
@@ -257,7 +291,7 @@ function GiantMic({
   onSubmit,
   voiceMode,
 }: {
-  onSubmit: (text: string, language: string) => void;
+  onSubmit: (text: string, language: string, voiceMeta?: VoiceMeta) => void;
   voiceMode: string;
 }) {
   const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
@@ -325,7 +359,7 @@ function GiantMic({
         return;
       }
       const langPrefix = voiceMode.split("-")[0];
-      onSubmit(finalText, langPrefix);
+      onSubmit(finalText, langPrefix, { lang: voiceMode, original: finalText });
       setTimeout(() => setTranscript(""), 1200);
       return;
     }
@@ -343,8 +377,16 @@ function GiantMic({
       setEnglishText(result.englishText);
       setDetectedLang(result.detectedLanguage);
       if (result.englishText.trim()) {
+        const meta: VoiceMeta = {
+          lang: result.detectedLanguage || "en",
+          original: result.transcript || result.englishText,
+        };
         setTimeout(() => {
-          onSubmit(result.englishText, (result.detectedLanguage || "en").split("-")[0]);
+          onSubmit(
+            result.englishText,
+            (result.detectedLanguage || "en").split("-")[0],
+            meta
+          );
           setTranscript("");
           setEnglishText("");
           setDetectedLang("");
@@ -505,7 +547,7 @@ function BottomBar({
 }: {
   typedInput: string;
   setTypedInput: (s: string) => void;
-  onSubmit: (text: string, language: string) => void;
+  onSubmit: (text: string, language: string, voiceMeta?: VoiceMeta) => void;
   disabled: boolean;
   voiceMode: string;
 }) {
@@ -549,7 +591,12 @@ function BottomBar({
       liveRef.current?.stop();
       setState("idle");
       const finalText = transcriptRef.current.trim();
-      if (finalText) onSubmit(finalText, voiceMode.split("-")[0]);
+      if (finalText) {
+        onSubmit(finalText, voiceMode.split("-")[0], {
+          lang: voiceMode,
+          original: finalText,
+        });
+      }
       setTranscript("");
       return;
     }
@@ -559,7 +606,11 @@ function BottomBar({
       const r = await transcribeAndTranslate(blob);
       setState("idle");
       if (r.englishText.trim()) {
-        onSubmit(r.englishText, (r.detectedLanguage || "en").split("-")[0]);
+        onSubmit(
+          r.englishText,
+          (r.detectedLanguage || "en").split("-")[0],
+          { lang: r.detectedLanguage || "en", original: r.transcript || r.englishText }
+        );
       }
       setTranscript("");
     }
@@ -619,8 +670,29 @@ function BottomBar({
 // Message bubbles + tool result cards
 // ===========================================================================
 
-function MessageBubble({ message }: { message: MessageShape }) {
+function MessageBubble({
+  message,
+  voiceMetaMap,
+}: {
+  message: MessageShape;
+  voiceMetaMap?: Map<string, VoiceMeta>;
+}) {
   const isUser = message.role === "user";
+
+  // Pull the first text part of a user message so we can look up its voice
+  // metadata (detected language + original transcript) by message text.
+  const userText = isUser
+    ? (message.parts ?? []).find((p) => p.type === "text" && p.text)?.text
+    : undefined;
+  const voiceMeta = userText ? voiceMetaMap?.get(userText) : undefined;
+
+  // Show the original-script line only when it's meaningfully different
+  // from the English (i.e. non-Latin script or a translated turn).
+  const hasOriginalScript =
+    !!voiceMeta &&
+    voiceMeta.original.trim().length > 0 &&
+    voiceMeta.original.trim() !== userText?.trim();
+
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"}`}>
       <div
@@ -628,6 +700,22 @@ function MessageBubble({ message }: { message: MessageShape }) {
           isUser ? "bg-amber-500/20 border border-amber-500/30" : "bg-white/5 border border-white/10"
         }`}
       >
+        {voiceMeta && (
+          <div className="mb-2 text-[11px] text-white/55">
+            <div className="flex items-center gap-1.5">
+              <span>🎙</span>
+              <span className="uppercase tracking-wide">
+                Detected: {languageName(voiceMeta.lang)}
+              </span>
+            </div>
+            {hasOriginalScript && (
+              <div className="mt-1 pl-4 text-[13px] text-white/75 italic leading-snug">
+                “{voiceMeta.original}”
+              </div>
+            )}
+            <div className="mt-1 h-px bg-white/10" />
+          </div>
+        )}
         {(message.parts ?? []).map((part, i) => {
           if (part.type === "text" && part.text) {
             return (
