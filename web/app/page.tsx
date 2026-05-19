@@ -31,6 +31,7 @@ import { requestGeolocation, PEORIA_FALLBACK, type GeoFix } from "@/lib/geo";
 import { renderMarkdown } from "@/lib/markdown";
 import { apiUrl } from "@/lib/api-base";
 import { isNative } from "@/lib/platform";
+import { speak, stopSpeaking } from "@/lib/tts";
 
 const SAMPLE_PROMPTS = [
   "My grandfather is clutching his chest and sweating heavily. He's 72.",
@@ -102,6 +103,12 @@ export default function Home() {
   const [voiceMetaMap, setVoiceMetaMap] = useState<Map<string, VoiceMeta>>(
     () => new Map()
   );
+  // Speak agent replies back. ON by default — the bystander we're designing
+  // for may be doing CPR and can't read the screen.
+  const [speakerOn, setSpeakerOn] = useState(true);
+  // Track which assistant message IDs we've already spoken so React
+  // re-renders don't replay them.
+  const spokenIds = useRef<Set<string>>(new Set());
 
   const { messages, sendMessage, status, error, setMessages } = useChat({
     transport: new DefaultChatTransport({
@@ -109,6 +116,46 @@ export default function Home() {
       body: () => ({ caller: callerRef.current }),
     }),
   });
+
+  // Speak each assistant message once, when it finishes streaming.
+  // Lang picked from the most recent user voice message; falls back to
+  // voiceMode (default en-US) so typed prompts still get spoken in English.
+  useEffect(() => {
+    if (!speakerOn) return;
+    if (status === "streaming" || status === "submitted") return;
+    // Find the last assistant message
+    let lastAssistant: typeof messages[number] | undefined;
+    let lastUser: typeof messages[number] | undefined;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (!lastAssistant && m.role === "assistant") lastAssistant = m;
+      if (!lastUser && m.role === "user") lastUser = m;
+      if (lastAssistant && lastUser) break;
+    }
+    if (!lastAssistant) return;
+    if (spokenIds.current.has(lastAssistant.id)) return;
+
+    const text = (lastAssistant.parts ?? [])
+      .filter((p) => p.type === "text" && typeof (p as { text?: string }).text === "string")
+      .map((p) => (p as { text: string }).text)
+      .join(" ")
+      .trim();
+    if (!text) return;
+
+    spokenIds.current.add(lastAssistant.id);
+
+    const userText = (lastUser?.parts ?? []).find(
+      (p) => p.type === "text" && typeof (p as { text?: string }).text === "string"
+    ) as { text?: string } | undefined;
+    const meta = userText?.text ? voiceMetaMap.get(userText.text) : undefined;
+    const lang = meta?.lang || voiceMode || "en-US";
+    speak(text, lang);
+  }, [messages, status, speakerOn, voiceMetaMap, voiceMode]);
+
+  // If the user mutes mid-utterance, hard-stop any in-flight audio.
+  useEffect(() => {
+    if (!speakerOn) stopSpeaking();
+  }, [speakerOn]);
 
   const submit = (text: string, language: string = "en", voiceMeta?: VoiceMeta) => {
     if (!text.trim()) return;
@@ -125,6 +172,8 @@ export default function Home() {
   };
 
   const reset = () => {
+    stopSpeaking();
+    spokenIds.current = new Set();
     setMessages([]);
     setTypedInput("");
     setVoiceMetaMap(new Map());
@@ -145,6 +194,18 @@ export default function Home() {
           <span className="text-white/50 truncate">AI emergency dispatcher</span>
         </div>
         <div className="flex items-center gap-2">
+          <button
+            onClick={() => setSpeakerOn((v) => !v)}
+            className={`text-[11px] px-2 py-1 rounded border transition ${
+              speakerOn
+                ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20"
+                : "border-white/15 bg-white/5 text-white/50 hover:text-white"
+            }`}
+            title={speakerOn ? "Mute spoken replies" : "Speak agent replies"}
+            aria-label={speakerOn ? "Mute" : "Unmute"}
+          >
+            {speakerOn ? "🔊" : "🔇"}
+          </button>
           {hasMessages && (
             <button
               onClick={reset}
