@@ -73,8 +73,14 @@ export async function POST(req: Request) {
 
     if (!res.ok) {
       const errText = await res.text();
+      console.error("[speech] sarvam STT failed", {
+        status: res.status,
+        contentType: cleanType,
+        sizeBytes: normalized.size,
+        body: errText.slice(0, 500),
+      });
       return Response.json(
-        { error: `Sarvam STT HTTP ${res.status}: ${errText}` },
+        { error: `Sarvam STT HTTP ${res.status}: ${errText.slice(0, 300)}` },
         { status: 502, headers: cors }
       );
     }

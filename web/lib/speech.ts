@@ -133,6 +133,12 @@ export function startLiveRecognition(
 export interface RecorderHandle {
   stop: () => Promise<Blob>;
   cancel: () => void;
+  /**
+   * The live MediaStream. Exposed so the UI can wire it up to a
+   * Web Audio AnalyserNode and render a real-time waveform.
+   * Becomes inactive once stop()/cancel() runs.
+   */
+  stream: MediaStream;
 }
 
 export function isRecordingSupported(): boolean {
@@ -151,6 +157,7 @@ export async function startRecording(): Promise<RecorderHandle> {
   recorder.start();
   const cleanup = () => stream.getTracks().forEach((t) => t.stop());
   return {
+    stream,
     stop: () =>
       new Promise<Blob>((resolve) => {
         recorder.onstop = () => {

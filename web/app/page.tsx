@@ -32,6 +32,7 @@ import { renderMarkdown } from "@/lib/markdown";
 import { apiUrl } from "@/lib/api-base";
 import { isNative } from "@/lib/platform";
 import { speak, stopSpeaking } from "@/lib/tts";
+import { Waveform } from "@/components/Waveform";
 
 const SAMPLE_PROMPTS = [
   "My grandfather is clutching his chest and sweating heavily. He's 72.",
@@ -106,6 +107,9 @@ export default function Home() {
   // Speak agent replies back. ON by default — the bystander we're designing
   // for may be doing CPR and can't read the screen.
   const [speakerOn, setSpeakerOn] = useState(true);
+  // True while TTS audio is actively playing. Gates the mic so the user
+  // can't accidentally talk over the agent.
+  const [speaking, setSpeaking] = useState(false);
   // Track which assistant message IDs we've already spoken so React
   // re-renders don't replay them.
   const spokenIds = useRef<Set<string>>(new Set());
@@ -149,12 +153,16 @@ export default function Home() {
     ) as { text?: string } | undefined;
     const meta = userText?.text ? voiceMetaMap.get(userText.text) : undefined;
     const lang = meta?.lang || voiceMode || "en-US";
-    speak(text, lang);
+    setSpeaking(true);
+    speak(text, lang).finally(() => setSpeaking(false));
   }, [messages, status, speakerOn, voiceMetaMap, voiceMode]);
 
   // If the user mutes mid-utterance, hard-stop any in-flight audio.
   useEffect(() => {
-    if (!speakerOn) stopSpeaking();
+    if (!speakerOn) {
+      stopSpeaking();
+      setSpeaking(false);
+    }
   }, [speakerOn]);
 
   const submit = (text: string, language: string = "en", voiceMeta?: VoiceMeta) => {
@@ -253,7 +261,20 @@ export default function Home() {
             />
           ))}
           {status === "streaming" && (
-            <div className="text-sm text-white/40">Dispatcher thinking…</div>
+            <div className="flex items-center gap-2 text-sm text-white/50">
+              <span className="inline-flex gap-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/80 animate-bounce [animation-delay:-0.2s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/80 animate-bounce [animation-delay:-0.1s]" />
+                <span className="w-1.5 h-1.5 rounded-full bg-amber-400/80 animate-bounce" />
+              </span>
+              Dispatcher thinking…
+            </div>
+          )}
+          {speaking && status !== "streaming" && (
+            <div className="flex items-center gap-2 text-sm text-emerald-300/80">
+              <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              Dispatcher speaking — please listen
+            </div>
           )}
           {error && <div className="text-sm text-red-400">Error: {error.message}</div>}
         </section>
@@ -264,7 +285,7 @@ export default function Home() {
           typedInput={typedInput}
           setTypedInput={setTypedInput}
           onSubmit={submit}
-          disabled={status === "streaming"}
+          disabled={status === "streaming" || speaking}
           voiceMode={voiceMode}
         />
       )}
@@ -360,11 +381,62 @@ function GiantMic({
   const [englishText, setEnglishText] = useState("");
   const [detectedLang, setDetectedLang] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const liveRef = useRef<{ stop: () => void } | null>(null);
-  const recRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+  const recRef = useRef<{
+    stop: () => Promise<Blob>;
+    cancel: () => void;
+    stream: MediaStream;
+  } | null>(null);
   const transcriptRef = useRef("");
+  // Last recorded audio blob — kept across an error so the user can
+  // retry without re-speaking. Cleared on a successful submission.
+  const lastBlobRef = useRef<Blob | null>(null);
 
   const engine = getEngine(voiceMode);
+
+  // Send a blob to Sarvam + dispatch; reused by both stop() and retry().
+  const submitBlob = async (blob: Blob) => {
+    setState("processing");
+    const result = await transcribeAndTranslate(blob);
+    if (result.error) {
+      lastBlobRef.current = blob;
+      setErr(result.error);
+      setState("idle");
+      return;
+    }
+    setTranscript(result.transcript);
+    setEnglishText(result.englishText);
+    setDetectedLang(result.detectedLanguage);
+    if (result.englishText.trim()) {
+      const meta: VoiceMeta = {
+        lang: result.detectedLanguage || "en",
+        original: result.transcript || result.englishText,
+      };
+      lastBlobRef.current = null;
+      setTimeout(() => {
+        onSubmit(
+          result.englishText,
+          (result.detectedLanguage || "en").split("-")[0],
+          meta
+        );
+        setTranscript("");
+        setEnglishText("");
+        setDetectedLang("");
+        setState("idle");
+      }, 1400);
+    } else {
+      lastBlobRef.current = blob;
+      setErr("We didn't catch any speech. Try again, a bit closer to the mic.");
+      setState("idle");
+    }
+  };
+
+  const retryLast = async () => {
+    if (!lastBlobRef.current) return;
+    setErr(null);
+    await submitBlob(lastBlobRef.current);
+  };
 
   const onTap = async () => {
     if (state === "idle") {
@@ -403,6 +475,7 @@ function GiantMic({
         try {
           const r = await startRecording();
           recRef.current = r;
+          setActiveStream(r.stream);
           setState("recording");
         } catch {
           setErr("Microphone permission denied.");
@@ -426,37 +499,9 @@ function GiantMic({
     }
 
     if (state === "recording" && engine === "sarvam") {
-      setState("processing");
       const blob = await recRef.current!.stop();
-      const result = await transcribeAndTranslate(blob);
-      if (result.error) {
-        setErr(result.error);
-        setState("idle");
-        return;
-      }
-      setTranscript(result.transcript);
-      setEnglishText(result.englishText);
-      setDetectedLang(result.detectedLanguage);
-      if (result.englishText.trim()) {
-        const meta: VoiceMeta = {
-          lang: result.detectedLanguage || "en",
-          original: result.transcript || result.englishText,
-        };
-        setTimeout(() => {
-          onSubmit(
-            result.englishText,
-            (result.detectedLanguage || "en").split("-")[0],
-            meta
-          );
-          setTranscript("");
-          setEnglishText("");
-          setDetectedLang("");
-          setState("idle");
-        }, 1400);
-      } else {
-        setErr("Didn't catch that — try again.");
-        setState("idle");
-      }
+      setActiveStream(null);
+      await submitBlob(blob);
     }
   };
 
@@ -501,6 +546,11 @@ function GiantMic({
         </div>
       </div>
 
+      {/* Live waveform — only renders while a mic stream is active (sarvam path). */}
+      {activeStream && (
+        <Waveform stream={activeStream} className="w-full max-w-md" />
+      )}
+
       {(transcript || englishText) && (
         <div className="w-full max-w-md p-3 rounded-xl bg-white/5 border border-white/10 text-sm space-y-2">
           {detectedLang && (
@@ -521,13 +571,56 @@ function GiantMic({
       )}
 
       {err && (
-        <details className="text-xs text-red-400 text-center max-w-xs">
-          <summary className="cursor-pointer">Something went wrong — tap for details</summary>
-          <div className="mt-2 text-[10px] text-red-300/70 text-left break-all">{err}</div>
-        </details>
+        <div className="flex flex-col items-center gap-2 max-w-xs text-center">
+          <div className="text-xs text-red-300">{friendlyMicError(err)}</div>
+          <div className="flex gap-2">
+            {lastBlobRef.current && (
+              <button
+                type="button"
+                onClick={retryLast}
+                disabled={state === "processing"}
+                className="text-xs px-3 py-1.5 rounded-md bg-amber-500 text-black font-semibold hover:bg-amber-400 disabled:opacity-40 transition"
+              >
+                Retry
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                lastBlobRef.current = null;
+              }}
+              className="text-xs px-3 py-1.5 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-white/70 transition"
+            >
+              Dismiss
+            </button>
+          </div>
+          <details className="text-[10px] text-red-300/60">
+            <summary className="cursor-pointer">Details</summary>
+            <div className="mt-1 text-left break-all">{err}</div>
+          </details>
+        </div>
       )}
     </div>
   );
+}
+
+// Map raw STT/recorder errors to a one-line user-facing message.
+function friendlyMicError(raw: string): string {
+  const r = raw.toLowerCase();
+  if (r.includes("502") || r.includes("sarvam stt")) {
+    return "Transcription service hiccup. Your recording is saved — tap Retry.";
+  }
+  if (r.includes("permission") || r.includes("not-allowed")) {
+    return "Microphone permission denied. Enable mic access and try again.";
+  }
+  if (r.includes("network") || r.includes("failed to fetch")) {
+    return "Network blip. Your recording is saved — tap Retry.";
+  }
+  if (r.includes("didn't catch") || r.includes("any speech")) {
+    return "We didn't catch any speech — try again, a bit closer to the mic.";
+  }
+  return "Something went wrong. Your recording is saved — tap Retry.";
 }
 
 // ===========================================================================
@@ -614,14 +707,54 @@ function BottomBar({
 }) {
   const [state, setState] = useState<"idle" | "recording" | "processing">("idle");
   const [transcript, setTranscript] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [activeStream, setActiveStream] = useState<MediaStream | null>(null);
   const transcriptRef = useRef("");
   const liveRef = useRef<{ stop: () => void } | null>(null);
-  const recRef = useRef<{ stop: () => Promise<Blob>; cancel: () => void } | null>(null);
+  const recRef = useRef<{
+    stop: () => Promise<Blob>;
+    cancel: () => void;
+    stream: MediaStream;
+  } | null>(null);
+  // Preserve the last recorded blob across an STT error so the user can retry.
+  const lastBlobRef = useRef<Blob | null>(null);
 
   const engine = getEngine(voiceMode);
 
+  const submitBlob = async (blob: Blob) => {
+    setState("processing");
+    const r = await transcribeAndTranslate(blob);
+    if (r.error) {
+      lastBlobRef.current = blob;
+      setErr(r.error);
+      setState("idle");
+      return;
+    }
+    if (r.englishText.trim()) {
+      lastBlobRef.current = null;
+      onSubmit(
+        r.englishText,
+        (r.detectedLanguage || "en").split("-")[0],
+        { lang: r.detectedLanguage || "en", original: r.transcript || r.englishText }
+      );
+      setTranscript("");
+      setState("idle");
+    } else {
+      lastBlobRef.current = blob;
+      setErr("We didn't catch any speech. Try again, a bit closer to the mic.");
+      setState("idle");
+    }
+  };
+
+  const retryLast = async () => {
+    if (!lastBlobRef.current) return;
+    setErr(null);
+    await submitBlob(lastBlobRef.current);
+  };
+
   const onMic = async () => {
     if (state === "idle") {
+      setErr(null);
       setTranscript("");
       transcriptRef.current = "";
       if (engine === "web") {
@@ -631,7 +764,10 @@ function BottomBar({
             setTranscript(t.transcript);
             transcriptRef.current = t.transcript;
           },
-          () => setState("idle")
+          (msg) => {
+            setErr(msg);
+            setState("idle");
+          }
         );
         if (h) {
           liveRef.current = h;
@@ -641,9 +777,10 @@ function BottomBar({
         try {
           const r = await startRecording();
           recRef.current = r;
+          setActiveStream(r.stream);
           setState("recording");
         } catch {
-          // mic denied
+          setErr("Microphone permission denied.");
         }
       }
       return;
@@ -662,27 +799,50 @@ function BottomBar({
       return;
     }
     if (state === "recording" && engine === "sarvam") {
-      setState("processing");
       const blob = await recRef.current!.stop();
-      const r = await transcribeAndTranslate(blob);
-      setState("idle");
-      if (r.englishText.trim()) {
-        onSubmit(
-          r.englishText,
-          (r.detectedLanguage || "en").split("-")[0],
-          { lang: r.detectedLanguage || "en", original: r.transcript || r.englishText }
-        );
-      }
-      setTranscript("");
+      setActiveStream(null);
+      await submitBlob(blob);
     }
   };
 
   return (
     <div className="fixed bottom-0 left-0 right-0 bg-black/90 backdrop-blur border-t border-white/10">
       <div className="max-w-3xl mx-auto px-4 py-3">
+        {activeStream && (
+          <div className="mb-2">
+            <Waveform stream={activeStream} height={40} />
+          </div>
+        )}
         {transcript && (
           <div className="text-xs text-emerald-300 mb-2 truncate">
             🎙️ {transcript}
+          </div>
+        )}
+        {err && (
+          <div className="mb-2 flex items-center gap-2 text-xs">
+            <span className="text-red-300 flex-1 truncate">
+              {friendlyMicError(err)}
+            </span>
+            {lastBlobRef.current && (
+              <button
+                type="button"
+                onClick={retryLast}
+                disabled={state === "processing"}
+                className="px-2 py-1 rounded bg-amber-500 text-black font-semibold hover:bg-amber-400 disabled:opacity-40 transition"
+              >
+                Retry
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setErr(null);
+                lastBlobRef.current = null;
+              }}
+              className="px-2 py-1 rounded border border-white/15 bg-white/5 text-white/60 hover:text-white transition"
+            >
+              ✕
+            </button>
           </div>
         )}
         <form
