@@ -17,9 +17,11 @@ export async function OPTIONS(req: Request) {
   return preflightResponse(req);
 }
 
-// Sarvam accepts up to ~500 chars per input. We chunk by sentence so we never
-// truncate mid-word. The Sarvam call returns one audio per input in order.
-const MAX_CHARS_PER_CHUNK = 450;
+// Sarvam translate's per-call limit is ~1000 chars; TTS's per-input limit is
+// ~500. We chunk at 300 to leave headroom for the translated text potentially
+// being longer than the English source (Indic scripts use ~1.2-1.5x bytes per
+// concept). We chunk by sentence so we never truncate mid-word.
+const MAX_CHARS_PER_CHUNK = 300;
 
 function chunkText(text: string): string[] {
   const cleaned = text.trim();
@@ -76,14 +78,13 @@ function normalizeLang(lang: string): string {
   return map[base] ?? "en-IN";
 }
 
-async function translateToTarget(
+async function translateChunk(
   apiKey: string,
   text: string,
   target_language_code: string
-): Promise<string> {
-  // English target — no translation needed; just return as-is.
+): Promise<{ text: string; ok: boolean; reason?: string }> {
   if (target_language_code === "en-IN" || target_language_code === "en-US") {
-    return text;
+    return { text, ok: true };
   }
   try {
     const res = await fetch("https://api.sarvam.ai/translate", {
@@ -99,11 +100,50 @@ async function translateToTarget(
         mode: "formal",
       }),
     });
-    if (!res.ok) return text; // Best-effort fallback: speak the English.
+    if (!res.ok) {
+      const body = await res.text();
+      return { text, ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 200)}` };
+    }
     const data = (await res.json()) as { translated_text?: string };
-    return (data.translated_text ?? "").trim() || text;
-  } catch {
-    return text;
+    const translated = (data.translated_text ?? "").trim();
+    if (!translated) return { text, ok: false, reason: "empty translated_text" };
+    return { text: translated, ok: true };
+  } catch (err) {
+    return { text, ok: false, reason: (err as Error).message };
+  }
+}
+
+async function synthesizeChunk(
+  apiKey: string,
+  text: string,
+  target_language_code: string
+): Promise<{ audios: string[]; ok: boolean; reason?: string }> {
+  try {
+    const res = await fetch("https://api.sarvam.ai/text-to-speech", {
+      method: "POST",
+      headers: {
+        "api-subscription-key": apiKey,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: [text],
+        target_language_code,
+        speaker: "anushka",
+        model: "bulbul:v2",
+        pitch: 0,
+        pace: 1.0,
+        loudness: 1.2,
+        enable_preprocessing: true,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      return { audios: [], ok: false, reason: `HTTP ${res.status}: ${body.slice(0, 200)}` };
+    }
+    const data = (await res.json()) as { audios?: string[] };
+    return { audios: data.audios ?? [], ok: true };
+  } catch (err) {
+    return { audios: [], ok: false, reason: (err as Error).message };
   }
 }
 
@@ -135,44 +175,49 @@ export async function POST(req: Request) {
   const target_language_code = normalizeLang(lang);
 
   // Agent always replies in English. Sarvam TTS does NOT translate — it
-  // expects text in the target script/language. So we translate first,
-  // then synthesize.
-  const localizedText = await translateToTarget(apiKey, text, target_language_code);
-  const inputs = chunkText(localizedText);
+  // expects text in the target script. So for each chunk: translate first,
+  // then synthesize. Chunking BEFORE translation keeps every translate call
+  // small (avoids the ~1000-char limit that silently dropped the third-turn
+  // triage summary in the 2026-05-19 Lounge prep, which fell through to the
+  // English-passthrough fallback and gave the audience English audio on
+  // what should have been the Kannada money turn).
+  const chunks = chunkText(text);
+  const audios: string[] = [];
+  const issues: string[] = [];
 
-  try {
-    const res = await fetch("https://api.sarvam.ai/text-to-speech", {
-      method: "POST",
-      headers: {
-        "api-subscription-key": apiKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        inputs,
-        target_language_code,
-        speaker: "anushka",
-        model: "bulbul:v2",
-        pitch: 0,
-        pace: 1.0,
-        loudness: 1.2,
-        enable_preprocessing: true,
-      }),
-    });
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return Response.json(
-        { error: `Sarvam TTS HTTP ${res.status}: ${errText.slice(0, 300)}` },
-        { status: 502, headers: cors }
-      );
+  for (let i = 0; i < chunks.length; i++) {
+    const chunk = chunks[i];
+    const t = await translateChunk(apiKey, chunk, target_language_code);
+    if (!t.ok) {
+      issues.push(`translate#${i}: ${t.reason}`);
+      console.warn(`[tts] translate chunk ${i + 1}/${chunks.length} failed`, {
+        target: target_language_code,
+        chunkLen: chunk.length,
+        reason: t.reason,
+      });
     }
-
-    const data = (await res.json()) as { audios?: string[] };
-    return Response.json({ audios: data.audios ?? [] }, { headers: cors });
-  } catch (err) {
-    return Response.json(
-      { error: (err as Error).message },
-      { status: 500, headers: cors }
-    );
+    const s = await synthesizeChunk(apiKey, t.text, target_language_code);
+    if (!s.ok) {
+      issues.push(`tts#${i}: ${s.reason}`);
+      console.warn(`[tts] synth chunk ${i + 1}/${chunks.length} failed`, {
+        target: target_language_code,
+        chunkLen: t.text.length,
+        reason: s.reason,
+      });
+      continue;
+    }
+    audios.push(...s.audios);
   }
+
+  console.log(`[tts] ok`, {
+    target: target_language_code,
+    chunks: chunks.length,
+    audios: audios.length,
+    issues: issues.length,
+  });
+
+  return Response.json(
+    { audios, ...(issues.length ? { warnings: issues } : {}) },
+    { headers: cors }
+  );
 }
