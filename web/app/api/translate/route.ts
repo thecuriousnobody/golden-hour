@@ -23,8 +23,20 @@
  */
 
 import { corsHeaders, preflightResponse } from "@/lib/cors";
+import {
+  rateLimit,
+  tooManyRequestsResponse,
+  checkBodySize,
+  payloadTooLargeResponse,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 30;
+
+// Translate is called once per assistant message for bilingual display +
+// once per chunk by the TTS pipeline. 60/min comfortably covers a chatty
+// session and still catches abuse.
+const RATE_MAX_PER_MIN = 60;
+const MAX_BODY_BYTES = 32 * 1024;
 
 export async function OPTIONS(req: Request) {
   return preflightResponse(req);
@@ -231,6 +243,12 @@ async function translateMarkdownStructured(
 }
 
 export async function POST(req: Request) {
+  const size = checkBodySize(req, MAX_BODY_BYTES);
+  if (!size.ok) return payloadTooLargeResponse(req, size.size, MAX_BODY_BYTES);
+
+  const rl = rateLimit(req, { key: "translate", max: RATE_MAX_PER_MIN });
+  if (!rl.ok) return tooManyRequestsResponse(req, rl);
+
   const cors = corsHeaders(req);
 
   let body: TranslateRequest;

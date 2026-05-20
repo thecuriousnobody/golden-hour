@@ -3,8 +3,19 @@ import { convertToModelMessages } from "ai";
 import type { UIMessage, ModelMessage } from "ai";
 import type { CallerContext } from "@/lib/types";
 import { corsHeaders, preflightResponse } from "@/lib/cors";
+import {
+  rateLimit,
+  tooManyRequestsResponse,
+  checkBodySize,
+  payloadTooLargeResponse,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 120;
+
+// Per-endpoint guard rails. Dispatch is the most expensive call (Claude
+// Haiku + tool fan-out), so it gets the strictest cap.
+const RATE_MAX_PER_MIN = 20;
+const MAX_BODY_BYTES = 32 * 1024; // 32KB — chat history + caller context
 
 export async function OPTIONS(req: Request) {
   return preflightResponse(req);
@@ -70,6 +81,14 @@ function stripRenderingData(messages: ModelMessage[]): ModelMessage[] {
 }
 
 export async function POST(req: Request) {
+  // Cheapest checks first — body size before parsing JSON, rate limit
+  // before invoking Claude.
+  const size = checkBodySize(req, MAX_BODY_BYTES);
+  if (!size.ok) return payloadTooLargeResponse(req, size.size, MAX_BODY_BYTES);
+
+  const rl = rateLimit(req, { key: "dispatch", max: RATE_MAX_PER_MIN });
+  if (!rl.ok) return tooManyRequestsResponse(req, rl);
+
   try {
     const { messages, caller } = (await req.json()) as {
       messages: UIMessage[];

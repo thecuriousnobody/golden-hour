@@ -8,8 +8,20 @@
  */
 
 import { corsHeaders, preflightResponse } from "@/lib/cors";
+import {
+  rateLimit,
+  tooManyRequestsResponse,
+  checkBodySize,
+  payloadTooLargeResponse,
+} from "@/lib/rate-limit";
 
 export const maxDuration = 60;
+
+// 10 MB caps a roughly 5-minute opus blob — well beyond any realistic
+// triage turn but still protects against an attacker streaming gigabytes
+// to bill us per byte on Sarvam.
+const MAX_BODY_BYTES = 10 * 1024 * 1024;
+const RATE_MAX_PER_MIN = 20;
 
 export async function OPTIONS(req: Request) {
   return preflightResponse(req);
@@ -25,6 +37,12 @@ function mimeToExt(mime: string): string {
 }
 
 export async function POST(req: Request) {
+  const size = checkBodySize(req, MAX_BODY_BYTES);
+  if (!size.ok) return payloadTooLargeResponse(req, size.size, MAX_BODY_BYTES);
+
+  const rl = rateLimit(req, { key: "speech", max: RATE_MAX_PER_MIN });
+  if (!rl.ok) return tooManyRequestsResponse(req, rl);
+
   const cors = corsHeaders(req);
   const apiKey = process.env.SARVAM_API_KEY;
 
