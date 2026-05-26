@@ -74,10 +74,24 @@ export const sendWhatsApp = tool({
   execute: async ({ recipientType, recipientName, recipientPhone, body }): Promise<SendResult & { _card: unknown }> => {
     const intendedTo = normalizePhone(recipientPhone);
 
-    // Demo override: if DEMO_WHATSAPP_OVERRIDE_TO is set, route every dispatch
-    // there so a single tester can see all four messages on one phone (Twilio
-    // sandbox requires each receiving number to have joined separately).
-    const override = process.env.DEMO_WHATSAPP_OVERRIDE_TO?.trim();
+    // Demo overrides — two layers, most specific first:
+    //   1. Per-role: DEMO_WHATSAPP_HOSPITAL_TO / _AMBULANCE_TO / _NURSE_TO /
+    //      _FAMILY_TO route a specific recipient role to a specific real phone
+    //      (e.g. hospital → Rajeev, ambulance → Trinity for a live demo).
+    //   2. Global: DEMO_WHATSAPP_OVERRIDE_TO routes EVERY role to one phone so
+    //      a single tester sees the whole fan-out.
+    // Both exist because the Twilio WhatsApp sandbox only delivers to numbers
+    // that have joined it — we can't hit arbitrary recipient numbers.
+    const roleOverride: Partial<Record<Recipient, string | undefined>> = {
+      hospital: process.env.DEMO_WHATSAPP_HOSPITAL_TO,
+      ambulance: process.env.DEMO_WHATSAPP_AMBULANCE_TO,
+      nurse: process.env.DEMO_WHATSAPP_NURSE_TO,
+      family: process.env.DEMO_WHATSAPP_FAMILY_TO,
+    };
+    const overrideRaw =
+      roleOverride[recipientType]?.trim() ||
+      process.env.DEMO_WHATSAPP_OVERRIDE_TO?.trim();
+    const override = overrideRaw || undefined;
     const to = override ? normalizePhone(override) : intendedTo;
     const finalBody = override
       ? `[Demo: → ${recipientType.toUpperCase()} ${recipientName} (${intendedTo})]\n\n${body}`
