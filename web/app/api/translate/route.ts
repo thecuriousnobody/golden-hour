@@ -44,6 +44,12 @@ export async function OPTIONS(req: Request) {
 
 const MAX_CHARS_PER_CHUNK = 800;
 
+// See tts/route.ts for the full rationale: "classic-colloquial" is everyday
+// spoken language that stays in the target script, vs "formal" (stiff,
+// literary) or "modern-colloquial"/"code-mixed" (inject English loanwords).
+// Kept in sync with TTS so the on-screen text and the spoken audio match.
+const TRANSLATE_MODE = process.env.SARVAM_TRANSLATE_MODE ?? "classic-colloquial";
+
 function chunkText(text: string): string[] {
   const cleaned = text.trim();
   if (!cleaned) return [];
@@ -168,7 +174,7 @@ async function translateOne(
         input: text,
         source_language_code: sourceLanguage,
         target_language_code: targetLanguage,
-        mode: "formal",
+        mode: TRANSLATE_MODE,
       }),
     });
     if (!res.ok) {
@@ -339,7 +345,7 @@ export async function POST(req: Request) {
           input: chunk,
           source_language_code: sourceLanguage,
           target_language_code: targetLanguage,
-          mode: "formal",
+          mode: TRANSLATE_MODE,
         }),
       });
       if (!res.ok) {

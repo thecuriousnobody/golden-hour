@@ -24,6 +24,16 @@ export const maxDuration = 30;
 const RATE_MAX_PER_MIN = 30;
 const MAX_BODY_BYTES = 32 * 1024;
 
+// Sarvam translate "mode" controls register. "formal" produces stiff,
+// literary Kannada/Hindi that average bystanders don't speak. "classic-
+// colloquial" yields everyday spoken language while staying IN the target
+// script (unlike "modern-colloquial"/"code-mixed", which inject English
+// loanwords — fine on screen for literate urban readers, useless when
+// spoken aloud to someone who only knows the local language). Spoken TTS
+// is exactly that case, so we default to classic-colloquial. Env-overridable
+// so the register can be retuned between demos without a code change.
+const TRANSLATE_MODE = process.env.SARVAM_TRANSLATE_MODE ?? "classic-colloquial";
+
 export async function OPTIONS(req: Request) {
   return preflightResponse(req);
 }
@@ -108,7 +118,7 @@ async function translateChunk(
         input: text,
         source_language_code: "en-IN",
         target_language_code,
-        mode: "formal",
+        mode: TRANSLATE_MODE,
       }),
     });
     if (!res.ok) {
