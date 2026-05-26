@@ -91,12 +91,14 @@ export async function POST(req: Request) {
 
     if (!res.ok) {
       const errText = await res.text();
-      console.error("[speech] sarvam STT failed", {
-        status: res.status,
-        contentType: cleanType,
-        sizeBytes: normalized.size,
-        body: errText.slice(0, 500),
-      });
+      // Put status + content-type + size in the message STRING (not just a
+      // structured object) so they survive the dashboard's log-line
+      // truncation. Last time (2026-05-26 Lounge) the truncated view hid
+      // Sarvam's actual HTTP code, so we couldn't tell "audio too long" (4xx)
+      // from "transient hiccup" (5xx).
+      console.error(
+        `[speech] sarvam STT failed: HTTP ${res.status} contentType=${cleanType} bytes=${normalized.size} body=${errText.slice(0, 200)}`
+      );
       return Response.json(
         { error: `Sarvam STT HTTP ${res.status}: ${errText.slice(0, 300)}` },
         { status: 502, headers: cors }

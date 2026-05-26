@@ -497,6 +497,11 @@ function getEngine(voiceMode: string): "web" | "sarvam" {
   return VOICE_MODES.find((m) => m.code === voiceMode)?.engine ?? "web";
 }
 
+// Sarvam's STT-translate sync endpoint caps each clip at ~30s and rejects
+// anything longer outright. Auto-stop a little under that so a long, panicked
+// description still gets transcribed instead of failing wholesale.
+const MAX_RECORDING_MS = 25_000;
+
 // ===========================================================================
 // Giant mic — Web Speech API in en-US
 // ===========================================================================
@@ -524,6 +529,8 @@ function GiantMic({
   // Last recorded audio blob — kept across an error so the user can
   // retry without re-speaking. Cleared on a successful submission.
   const lastBlobRef = useRef<Blob | null>(null);
+  // Auto-stop timer for the 25s recording guard.
+  const recTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const engine = getEngine(voiceMode);
 
@@ -570,6 +577,21 @@ function GiantMic({
     await submitBlob(lastBlobRef.current);
   };
 
+  // Stop recording + submit. Shared by the manual "tap to dispatch" tap and
+  // the 25s auto-stop guard; recRef is nulled to guard against double-finish.
+  const finishRecording = async () => {
+    if (recTimerRef.current) {
+      clearTimeout(recTimerRef.current);
+      recTimerRef.current = null;
+    }
+    const rec = recRef.current;
+    if (!rec) return;
+    recRef.current = null;
+    const blob = await rec.stop();
+    setActiveStream(null);
+    await submitBlob(blob);
+  };
+
   const onTap = async () => {
     if (state === "idle") {
       setErr(null);
@@ -609,6 +631,9 @@ function GiantMic({
           recRef.current = r;
           setActiveStream(r.stream);
           setState("recording");
+          recTimerRef.current = setTimeout(() => {
+            void finishRecording();
+          }, MAX_RECORDING_MS);
         } catch {
           setErr("Microphone permission denied.");
         }
@@ -631,9 +656,7 @@ function GiantMic({
     }
 
     if (state === "recording" && engine === "sarvam") {
-      const blob = await recRef.current!.stop();
-      setActiveStream(null);
-      await submitBlob(blob);
+      await finishRecording();
     }
   };
 
@@ -681,6 +704,11 @@ function GiantMic({
       {/* Live waveform — only renders while a mic stream is active (sarvam path). */}
       {activeStream && (
         <Waveform stream={activeStream} className="w-full max-w-md" />
+      )}
+      {activeStream && (
+        <div className="text-[10px] uppercase tracking-wider text-white/40">
+          Keep it brief — auto-sends at 25s
+        </div>
       )}
 
       {(transcript || englishText) && (
@@ -741,18 +769,18 @@ function GiantMic({
 function friendlyMicError(raw: string): string {
   const r = raw.toLowerCase();
   if (r.includes("502") || r.includes("sarvam stt")) {
-    return "Transcription service hiccup. Your recording is saved — tap Retry.";
+    return "I didn't catch that — the transcription service hiccuped. Your recording is saved: tap Retry, or type it instead.";
   }
   if (r.includes("permission") || r.includes("not-allowed")) {
-    return "Microphone permission denied. Enable mic access and try again.";
+    return "Microphone access is off. Enable it in settings, or type the emergency instead.";
   }
   if (r.includes("network") || r.includes("failed to fetch")) {
-    return "Network blip. Your recording is saved — tap Retry.";
+    return "Network blip — your recording is saved. Tap Retry, or type it instead.";
   }
   if (r.includes("didn't catch") || r.includes("any speech")) {
-    return "We didn't catch any speech — try again, a bit closer to the mic.";
+    return "I didn't catch that — tap Retry, or type it instead.";
   }
-  return "Something went wrong. Your recording is saved — tap Retry.";
+  return "I didn't catch that — your recording is saved. Tap Retry, or type it instead.";
 }
 
 // ===========================================================================
@@ -850,6 +878,8 @@ function BottomBar({
   } | null>(null);
   // Preserve the last recorded blob across an STT error so the user can retry.
   const lastBlobRef = useRef<Blob | null>(null);
+  // Auto-stop timer for the 25s recording guard.
+  const recTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const engine = getEngine(voiceMode);
 
@@ -884,6 +914,21 @@ function BottomBar({
     await submitBlob(lastBlobRef.current);
   };
 
+  // Stop recording + submit. Shared by the manual mic tap and the 25s
+  // auto-stop guard; recRef is nulled to guard against double-finish.
+  const finishRecording = async () => {
+    if (recTimerRef.current) {
+      clearTimeout(recTimerRef.current);
+      recTimerRef.current = null;
+    }
+    const rec = recRef.current;
+    if (!rec) return;
+    recRef.current = null;
+    const blob = await rec.stop();
+    setActiveStream(null);
+    await submitBlob(blob);
+  };
+
   const onMic = async () => {
     if (state === "idle") {
       setErr(null);
@@ -911,6 +956,9 @@ function BottomBar({
           recRef.current = r;
           setActiveStream(r.stream);
           setState("recording");
+          recTimerRef.current = setTimeout(() => {
+            void finishRecording();
+          }, MAX_RECORDING_MS);
         } catch {
           setErr("Microphone permission denied.");
         }
@@ -931,9 +979,7 @@ function BottomBar({
       return;
     }
     if (state === "recording" && engine === "sarvam") {
-      const blob = await recRef.current!.stop();
-      setActiveStream(null);
-      await submitBlob(blob);
+      await finishRecording();
     }
   };
 
@@ -943,6 +989,9 @@ function BottomBar({
         {activeStream && (
           <div className="mb-2">
             <Waveform stream={activeStream} height={40} />
+            <div className="text-[10px] uppercase tracking-wider text-white/40 mt-1 text-center">
+              Keep it brief — auto-sends at 25s
+            </div>
           </div>
         )}
         {transcript && (
