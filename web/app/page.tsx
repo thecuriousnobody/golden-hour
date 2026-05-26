@@ -33,6 +33,7 @@ import { apiUrl } from "@/lib/api-base";
 import { isNative } from "@/lib/platform";
 import { speak, stopSpeaking } from "@/lib/tts";
 import { translateForDisplay } from "@/lib/translate";
+import { parseQuickReplies } from "@/lib/quick-replies";
 import { Waveform } from "@/components/Waveform";
 import { FailsafeCard } from "@/components/FailsafeCard";
 import { emergencyNumberFor } from "@/lib/failsafe-content";
@@ -172,11 +173,13 @@ export default function Home() {
     if (!lastAssistant) return;
     if (spokenIds.current.has(lastAssistant.id)) return;
 
-    const text = (lastAssistant.parts ?? [])
+    const raw = (lastAssistant.parts ?? [])
       .filter((p) => p.type === "text" && typeof (p as { text?: string }).text === "string")
       .map((p) => (p as { text: string }).text)
       .join(" ")
       .trim();
+    // Strip the OPTIONS: line — the tap chips shouldn't be read aloud.
+    const text = parseQuickReplies(raw).cleanText.trim();
     if (!text) return;
 
     spokenIds.current.add(lastAssistant.id);
@@ -216,11 +219,13 @@ export default function Home() {
     if (!lastAssistant) return;
     if (translatedIds.current.has(lastAssistant.id)) return;
 
-    const text = (lastAssistant.parts ?? [])
+    const raw = (lastAssistant.parts ?? [])
       .filter((p) => p.type === "text" && typeof (p as { text?: string }).text === "string")
       .map((p) => (p as { text: string }).text)
       .join(" ")
       .trim();
+    // Translate the prose only — never the OPTIONS: chips line.
+    const text = parseQuickReplies(raw).cleanText.trim();
     if (!text) return;
 
     const userText = (lastUser?.parts ?? []).find(
@@ -247,10 +252,16 @@ export default function Home() {
     });
   }, [messages, status, voiceMetaMap]);
 
+  // Remembers the last detected spoken language so typed/tapped follow-ups
+  // (quick-reply chips, typed answers) stay in that language for TTS +
+  // on-screen translation instead of snapping back to English.
+  const lastDetectedLangRef = useRef("en");
+
   const submit = (text: string, language: string = "en", voiceMeta?: VoiceMeta) => {
     if (!text.trim()) return;
     callerRef.current = { ...callerRef.current, language };
     if (voiceMeta) {
+      if (voiceMeta.lang) lastDetectedLangRef.current = voiceMeta.lang;
       setVoiceMetaMap((m) => {
         const next = new Map(m);
         next.set(text, voiceMeta);
@@ -259,6 +270,19 @@ export default function Home() {
     }
     sendMessage({ text });
     setTypedInput("");
+  };
+
+  // Tapping a clarifying-question chip sends that answer immediately, carrying
+  // the conversation's detected language so the agent's reply is still spoken
+  // and translated in it (the chip label itself is English).
+  const handleQuickReply = (text: string) => {
+    const lang = lastDetectedLangRef.current;
+    const base = lang.split("-")[0];
+    if (base && base !== "en") {
+      submit(text, base, { lang, original: text });
+    } else {
+      submit(text, "en");
+    }
   };
 
   const reset = () => {
@@ -368,12 +392,15 @@ export default function Home() {
         </>
       ) : (
         <section className="flex-1 flex flex-col gap-4 mt-4">
-          {messages.map((m) => (
+          {messages.map((m, idx) => (
             <MessageBubble
               key={m.id}
               message={m as MessageShape}
               voiceMetaMap={voiceMetaMap}
               translations={translations}
+              isLast={idx === messages.length - 1}
+              disabled={status === "streaming" || status === "submitted" || speaking}
+              onQuickReply={handleQuickReply}
             />
           ))}
           {status === "streaming" && (
@@ -1130,10 +1157,16 @@ function MessageBubble({
   message,
   voiceMetaMap,
   translations,
+  isLast,
+  disabled,
+  onQuickReply,
 }: {
   message: MessageShape;
   voiceMetaMap?: Map<string, VoiceMeta>;
   translations?: Map<string, { lang: string; text: string }>;
+  isLast?: boolean;
+  disabled?: boolean;
+  onQuickReply?: (text: string) => void;
 }) {
   const isUser = message.role === "user";
 
@@ -1214,15 +1247,34 @@ function MessageBubble({
         )}
         {(message.parts ?? []).map((part, i) => {
           if (part.type === "text" && part.text) {
-            // For assistant messages with a translation, swap the text
-            // body when the toggle says so. Tool cards still render in
-            // English — they're structured data, not prose, and a
-            // mid-translation hospital list is more confusing than helpful.
+            // Parse the English (canonical) text for tap options and strip the
+            // OPTIONS: line from whatever we display. For assistant messages
+            // with a translation, swap the body when the toggle says so;
+            // tool cards still render in English — structured data, not prose.
+            const parsed = parseQuickReplies(part.text);
             const displayText =
-              translation && showTranslation ? translation.text : part.text;
+              translation && showTranslation ? translation.text : parsed.cleanText;
+            const showChips = !isUser && isLast && parsed.options.length > 0;
             return (
-              <div key={i} className="text-sm whitespace-pre-wrap leading-relaxed">
-                {renderMarkdown(displayText)}
+              <div key={i}>
+                <div className="text-sm whitespace-pre-wrap leading-relaxed">
+                  {renderMarkdown(displayText)}
+                </div>
+                {showChips && (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {parsed.options.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        disabled={disabled}
+                        onClick={() => onQuickReply?.(opt)}
+                        className="px-3 py-2 rounded-full text-sm font-medium bg-amber-500/15 border border-amber-500/40 text-amber-200 hover:bg-amber-500/30 active:scale-95 disabled:opacity-40 disabled:pointer-events-none transition"
+                      >
+                        {opt}
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             );
           }
