@@ -529,8 +529,10 @@ function GiantMic({
   // Last recorded audio blob — kept across an error so the user can
   // retry without re-speaking. Cleared on a successful submission.
   const lastBlobRef = useRef<Blob | null>(null);
-  // Auto-stop timer for the 25s recording guard.
+  // Auto-stop timer + per-second countdown ticker for the 25s recording guard.
   const recTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
 
   const engine = getEngine(voiceMode);
 
@@ -584,12 +586,33 @@ function GiantMic({
       clearTimeout(recTimerRef.current);
       recTimerRef.current = null;
     }
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+    setSecsLeft(null);
     const rec = recRef.current;
     if (!rec) return;
     recRef.current = null;
     const blob = await rec.stop();
     setActiveStream(null);
     await submitBlob(blob);
+  };
+
+  // Begin the 25s recording window: a live on-screen countdown plus the hard
+  // auto-stop. Both timers are cleared in finishRecording.
+  const startCountdown = () => {
+    const startedAt = Date.now();
+    setSecsLeft(Math.ceil(MAX_RECORDING_MS / 1000));
+    tickRef.current = setInterval(() => {
+      const remaining = Math.ceil(
+        (MAX_RECORDING_MS - (Date.now() - startedAt)) / 1000
+      );
+      setSecsLeft(remaining > 0 ? remaining : 0);
+    }, 250);
+    recTimerRef.current = setTimeout(() => {
+      void finishRecording();
+    }, MAX_RECORDING_MS);
   };
 
   const onTap = async () => {
@@ -631,9 +654,7 @@ function GiantMic({
           recRef.current = r;
           setActiveStream(r.stream);
           setState("recording");
-          recTimerRef.current = setTimeout(() => {
-            void finishRecording();
-          }, MAX_RECORDING_MS);
+          startCountdown();
         } catch {
           setErr("Microphone permission denied.");
         }
@@ -705,9 +726,16 @@ function GiantMic({
       {activeStream && (
         <Waveform stream={activeStream} className="w-full max-w-md" />
       )}
-      {activeStream && (
-        <div className="text-[10px] uppercase tracking-wider text-white/40">
-          Keep it brief — auto-sends at 25s
+      {activeStream && secsLeft !== null && (
+        <div
+          className={`flex items-center gap-1.5 text-sm font-semibold tabular-nums ${
+            secsLeft <= 5 ? "text-red-400 animate-pulse" : "text-white/60"
+          }`}
+        >
+          ⏱ {secsLeft}s left
+          <span className="text-[10px] font-normal uppercase tracking-wider text-white/40">
+            — auto-sends at 0
+          </span>
         </div>
       )}
 
@@ -878,8 +906,10 @@ function BottomBar({
   } | null>(null);
   // Preserve the last recorded blob across an STT error so the user can retry.
   const lastBlobRef = useRef<Blob | null>(null);
-  // Auto-stop timer for the 25s recording guard.
+  // Auto-stop timer + per-second countdown ticker for the 25s recording guard.
   const recTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const tickRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [secsLeft, setSecsLeft] = useState<number | null>(null);
 
   const engine = getEngine(voiceMode);
 
@@ -921,12 +951,32 @@ function BottomBar({
       clearTimeout(recTimerRef.current);
       recTimerRef.current = null;
     }
+    if (tickRef.current) {
+      clearInterval(tickRef.current);
+      tickRef.current = null;
+    }
+    setSecsLeft(null);
     const rec = recRef.current;
     if (!rec) return;
     recRef.current = null;
     const blob = await rec.stop();
     setActiveStream(null);
     await submitBlob(blob);
+  };
+
+  // Begin the 25s recording window: live countdown + hard auto-stop.
+  const startCountdown = () => {
+    const startedAt = Date.now();
+    setSecsLeft(Math.ceil(MAX_RECORDING_MS / 1000));
+    tickRef.current = setInterval(() => {
+      const remaining = Math.ceil(
+        (MAX_RECORDING_MS - (Date.now() - startedAt)) / 1000
+      );
+      setSecsLeft(remaining > 0 ? remaining : 0);
+    }, 250);
+    recTimerRef.current = setTimeout(() => {
+      void finishRecording();
+    }, MAX_RECORDING_MS);
   };
 
   const onMic = async () => {
@@ -956,9 +1006,7 @@ function BottomBar({
           recRef.current = r;
           setActiveStream(r.stream);
           setState("recording");
-          recTimerRef.current = setTimeout(() => {
-            void finishRecording();
-          }, MAX_RECORDING_MS);
+          startCountdown();
         } catch {
           setErr("Microphone permission denied.");
         }
@@ -989,9 +1037,15 @@ function BottomBar({
         {activeStream && (
           <div className="mb-2">
             <Waveform stream={activeStream} height={40} />
-            <div className="text-[10px] uppercase tracking-wider text-white/40 mt-1 text-center">
-              Keep it brief — auto-sends at 25s
-            </div>
+            {secsLeft !== null && (
+              <div
+                className={`mt-1 text-center text-sm font-semibold tabular-nums ${
+                  secsLeft <= 5 ? "text-red-400 animate-pulse" : "text-white/50"
+                }`}
+              >
+                ⏱ {secsLeft}s left
+              </div>
+            )}
           </div>
         )}
         {transcript && (
